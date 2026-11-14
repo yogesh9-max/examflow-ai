@@ -37,19 +37,34 @@ def _password_sign_in_available():
     if AUTH_MODE == "otp" and mailer.ENABLED:
         return False
     return True
-DB_STATUS_TABLES = ("schools", "departments", "users", "examinations", "student_groups",
-                    "rooms", "invigilators", "scheduled_sessions")
+DB_STATUS_HIDDEN = {"login_codes"}
+
+
+def _table_names(conn):
+    """Every user table in whichever engine is behind the connection."""
+    try:
+        rows = conn.execute(
+            "SELECT table_name AS name FROM information_schema.tables "
+            "WHERE table_schema = 'public' AND table_type = 'BASE TABLE' "
+            "ORDER BY table_name").fetchall()
+    except Exception:
+        rows = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' "
+            "AND name NOT LIKE 'sqlite_%' ORDER BY name").fetchall()
+    return [row["name"] for row in rows]
 
 
 def _database_status():
-    """Live database health: row counts plus where the durable copy lives."""
+    """Live database health: row counts for every table, plus where it lives."""
     info = {"tables": {}, "records": 0}
     try:
         conn = db.connect()
         try:
-            for table in DB_STATUS_TABLES:
+            for table in _table_names(conn):
+                if table in DB_STATUS_HIDDEN:
+                    continue
                 try:
-                    count = conn.execute("SELECT COUNT(*) AS n FROM %s" % table).fetchone()["n"]
+                    count = conn.execute('SELECT COUNT(*) AS n FROM "%s"' % table).fetchone()["n"]
                 except Exception:
                     continue
                 info["tables"][table] = count
