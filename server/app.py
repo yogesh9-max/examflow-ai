@@ -162,8 +162,9 @@ class Handler(BaseHTTPRequestHandler):
             if not db.using_postgres():
                 return self._send(400, {"error": "Postgres is not configured (DATABASE_URL missing)"})
             import migrate_pg
+            reset = (query.get("reset") or "").strip().lower() in ("1", "true", "yes")
             try:
-                summary = migrate_pg.migrate_snapshot()
+                summary = migrate_pg.migrate_snapshot(reset=reset)
             except Exception as exc:
                 return self._send(500, {"error": str(exc)[:300]})
             return self._send(200, {"status": "ok", "migrated": summary})

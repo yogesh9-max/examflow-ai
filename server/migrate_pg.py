@@ -69,8 +69,12 @@ def table_order(source):
     return ordered
 
 
-def migrate_from_sqlite(source_path):
-    """Create the schema and copy every row into Postgres. Safe to re-run."""
+def migrate_from_sqlite(source_path, reset=False):
+    """Create the schema and copy every row into Postgres. Safe to re-run.
+
+    With ``reset`` the target tables are emptied first so demo/seed rows that the
+    empty database created on first boot cannot survive next to the real dataset.
+    """
     source = sqlite3.connect(source_path)
     source.row_factory = sqlite3.Row
     target = db.connect()
@@ -79,6 +83,13 @@ def migrate_from_sqlite(source_path):
         target.executescript(db.SCHEMA)
         target.commit()
         db._ensure_user_columns()
+        if reset:
+            target_tables = [row["name"] for row in target.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").fetchall()]
+            if target_tables:
+                target.execute("TRUNCATE TABLE %s RESTART IDENTITY CASCADE" % ",".join(target_tables))
+                target.commit()
+            summary["reset"] = True
         for table in table_order(source):
             target_columns = {row["name"] for row in
                               target.execute("PRAGMA table_info(%s)" % table).fetchall()}
@@ -104,10 +115,10 @@ def migrate_from_sqlite(source_path):
     return summary
 
 
-def migrate_snapshot():
+def migrate_snapshot(reset=False):
     path = download_snapshot()
     try:
-        return migrate_from_sqlite(path)
+        return migrate_from_sqlite(path, reset=reset)
     finally:
         try:
             os.remove(path)
