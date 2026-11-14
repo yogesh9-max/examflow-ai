@@ -60,7 +60,13 @@ def _database_status():
     except Exception as exc:  # pragma: no cover - diagnostics only
         info["reachable"] = False
         info["error"] = str(exc)[:200]
-    info.update(persistence.status())
+    if db.using_postgres():
+        info["engine"] = "postgres"
+        info["durability"] = "managed Postgres (DATABASE_URL); no snapshot commits needed"
+        info["snapshot"] = {"enabled": False}
+    else:
+        info["engine"] = "sqlite"
+        info.update(persistence.status())
     return info
 
 

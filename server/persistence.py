@@ -28,7 +28,11 @@ REPO = (os.environ.get("EXAMFLOW_SNAPSHOT_REPO") or "").strip()
 TOKEN = (os.environ.get("EXAMFLOW_GITHUB_TOKEN") or "").strip()
 SNAPSHOT_PATH = (os.environ.get("EXAMFLOW_SNAPSHOT_PATH") or "data/examflow.db.gz").strip()
 BRANCH = (os.environ.get("EXAMFLOW_SNAPSHOT_BRANCH") or "main").strip()
-ENABLED = bool(REPO and TOKEN)
+import pgdb  # noqa: E402  (kept below the stdlib imports on purpose)
+
+# A managed Postgres instance replaces the snapshot store entirely: durable data
+# no longer depends on committing a database file back to GitHub.
+ENABLED = bool(REPO and TOKEN) and not pgdb.enabled()
 
 DB_PATH = os.environ.get("EXAMFLOW_DB") or os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "examflow.db")

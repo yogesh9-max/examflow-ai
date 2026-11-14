@@ -50,6 +50,7 @@ SCOPED = {"departments", "student-groups", "examinations", "rooms", "invigilator
 
 # ------------------------------------------------------------------ utilities
 def _columns(conn, table):
+    # The Postgres adapter translates this PRAGMA into an information_schema lookup.
     return [r["name"] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()]
 
 

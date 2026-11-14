@@ -9,6 +9,8 @@ import sqlite3
 import uuid
 from datetime import datetime, timezone
 
+import pgdb
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_DIR = os.path.dirname(BASE_DIR)
 DB_PATH = os.environ.get("EXAMFLOW_DB", os.path.join(PROJECT_DIR, "examflow.db"))
@@ -279,7 +281,19 @@ def new_id() -> str:
     return uuid.uuid4().hex[:24]
 
 
-def connect() -> sqlite3.Connection:
+def using_postgres() -> bool:
+    """True when a managed Postgres instance is configured for this deployment."""
+    return pgdb.enabled()
+
+
+def connect():
+    """Open a database connection.
+
+    A configured ``DATABASE_URL`` switches the whole application to Postgres;
+    otherwise the local SQLite file (with GitHub snapshot durability) is used.
+    """
+    if pgdb.enabled():
+        return pgdb.connect()
     import persistence
     persistence.ensure_restored()
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
@@ -326,20 +340,30 @@ def ensure_student_accounts() -> int:
 
 
 def init_db(seed: bool = True) -> None:
-    import persistence
-    persistence.ensure_restored()
-    fresh = not os.path.exists(DB_PATH)
-    conn = connect()
-    conn.executescript(SCHEMA)
-    conn.commit()
-    conn.close()
+    fresh = False
+    if pgdb.enabled():
+        conn = connect()
+        try:
+            conn.executescript(SCHEMA)
+            conn.commit()
+            fresh = (conn.execute("SELECT COUNT(*) AS total FROM schools").fetchone()["total"] or 0) == 0
+        finally:
+            conn.close()
+    else:
+        import persistence
+        persistence.ensure_restored()
+        fresh = not os.path.exists(DB_PATH)
+        conn = connect()
+        conn.executescript(SCHEMA)
+        conn.commit()
+        conn.close()
     if seed and fresh:
         from seed import seed_database
         seed_database()
     _ensure_user_columns()
     changed = link_invigilator_accounts()
     changed += ensure_student_accounts()
-    if changed:
+    if changed and not pgdb.enabled():
         import persistence
         persistence.save_now()
 
