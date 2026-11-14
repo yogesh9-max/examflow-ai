@@ -154,6 +154,20 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, {"status": "ok", "app": "ExamFlow AI",
                                     "database": _database_status()})
 
+        if method == "POST" and path == "/api/admin/migrate":
+            expected = (os.environ.get("EXAMFLOW_MIGRATE_TOKEN") or "").strip()
+            supplied = (self.headers.get("X-Migrate-Token") or "").strip()
+            if not expected or supplied != expected:
+                return self._send(401, {"error": "unauthorized"})
+            if not db.using_postgres():
+                return self._send(400, {"error": "Postgres is not configured (DATABASE_URL missing)"})
+            import migrate_pg
+            try:
+                summary = migrate_pg.migrate_snapshot()
+            except Exception as exc:
+                return self._send(500, {"error": str(exc)[:300]})
+            return self._send(200, {"status": "ok", "migrated": summary})
+
         if path == "/api/integrations":
             return self._send(200, {"status": "ok", "services": integrations.status()})
 
