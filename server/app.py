@@ -17,6 +17,7 @@ import auth
 import api
 import persistence
 import google_auth
+import integrations
 import mailer
 import otp
 import solver_service
@@ -146,6 +147,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/status":
             return self._send(200, {"status": "ok", "app": "ExamFlow AI",
                                     "database": _database_status()})
+
+        if path == "/api/integrations":
+            return self._send(200, {"status": "ok", "services": integrations.status()})
 
         conn = db.connect()
         try:
@@ -322,7 +326,12 @@ class Handler(BaseHTTPRequestHandler):
                 if not _password_sign_in_available():
                     raise auth.Unauthorized(
                         "Password sign-in is switched off on this deployment.")
-                user = auth.authenticate(body.get("email") or "", body.get("password") or "")
+                email = (body.get("email") or "").strip().lower()
+                allowed, _remaining = integrations.rate_limit(
+                    "login:%s:%s" % (self.client_address[0], email), 10, 600)
+                if not allowed:
+                    raise auth.Unauthorized("Too many sign-in attempts. Try again in a few minutes.")
+                user = auth.authenticate(email, body.get("password") or "")
                 if not user:
                     raise auth.Unauthorized("Email or password is incorrect.")
                 allowed_roles = {"admin": ("Super Admin", "School Admin"),
@@ -356,7 +365,7 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/meta":
                 return self._send(200, api.meta(conn, user))
             if path == "/api/dashboard":
-                return self._send(200, api.dashboard(conn, user))
+                return self._send(200, api.dashboard_cached(conn, user))
             if path == "/api/my-duties":
                 return self._send(200, api.my_duties(conn, user))
             if path == "/api/my-exams":

@@ -5,6 +5,7 @@ import json
 
 import db
 import auth
+import integrations
 import solver_service
 from scheduler.constraints import PRIORITY_RANK  # noqa: F401  (documented dependency)
 
@@ -483,6 +484,20 @@ def meta(conn, user):
 
 
 # ------------------------------------------------------------------ dashboard
+DASHBOARD_CACHE_TTL = 20
+
+
+def dashboard_cached(conn, user):
+    """Dashboard counters change on writes, so a short Redis cache is safe."""
+    key = "dash:%s" % user["id"]
+    cached = integrations.cache_get(key)
+    if cached:
+        return cached
+    payload = dashboard(conn, user)
+    integrations.cache_set(key, payload, DASHBOARD_CACHE_TTL)
+    return payload
+
+
 def dashboard(conn, user):
     school_id = user.get("school_id") if user["role"] != "Super Admin" else None
     where, args = ("WHERE school_id = ?", [school_id]) if school_id else ("", [])

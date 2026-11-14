@@ -1,2 +1,4 @@
-# ExamFlow AI uses only the Python standard library.
-# The Vercel Python runtime needs this file present even when empty.
+# ExamFlow AI runs on the Python standard library. The two driver packages below are
+# only needed for the optional MongoDB Atlas event log; the app still starts without them.
+pymongo==4.10.1
+dnspython==2.7.0

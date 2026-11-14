@@ -397,11 +397,29 @@ def encode_value(value):
 
 
 def audit(conn, user, action, entity_type=None, entity_id=None, details=None):
+    record_id = new_id()
+    stamp = now_iso()
     conn.execute(
         "INSERT INTO audit_logs (id,user_id,user_name,action,entity_type,entity_id,timestamp,details)"
         " VALUES (?,?,?,?,?,?,?,?)",
-        (new_id(), user.get("id") if user else None, user.get("full_name") if user else "system",
-         action, entity_type, entity_id, now_iso(), details))
+        (record_id, user.get("id") if user else None, user.get("full_name") if user else "system",
+         action, entity_type, entity_id, stamp, details))
+    # Mirror the audit trail into MongoDB when it is configured; never let a
+    # logging failure interrupt the transaction that produced the record.
+    try:
+        import integrations
+        integrations.log_event("audit_logs", {
+            "id": record_id,
+            "user_id": user.get("id") if user else None,
+            "user_name": user.get("full_name") if user else "system",
+            "action": action,
+            "entity_type": entity_type,
+            "entity_id": entity_id,
+            "timestamp": stamp,
+            "details": details,
+        })
+    except Exception:
+        pass
 
 
 def notify(conn, user_id, title, message, ntype="info"):
