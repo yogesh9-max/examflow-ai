@@ -19,6 +19,7 @@ Postgres; without it the app keeps using the SQLite file.
 """
 import os
 import re
+import threading
 
 try:  # pragma: no cover - exercised only when the driver is installed
     import psycopg2
@@ -137,8 +138,9 @@ class PgCursor:
 
 
 class PgConnection:
-    def __init__(self, raw):
+    def __init__(self, raw, pool=None):
         self._raw = raw
+        self._pool = pool
         self._raw.autocommit = False
 
     def execute(self, sql, params=None):
@@ -167,6 +169,21 @@ class PgConnection:
             pass
 
     def close(self):
+        if self._pool is not None:
+            pool, self._pool = self._pool, None
+            try:
+                self._raw.rollback()
+                healthy = self._raw.closed == 0
+            except Exception:
+                healthy = False
+            try:
+                pool.putconn(self._raw, close=not healthy)
+            except Exception:
+                try:
+                    self._raw.close()
+                except Exception:
+                    pass
+            return
         try:
             self._raw.close()
         except Exception:
@@ -177,9 +194,52 @@ class PgConnection:
         return PgCursor(self._raw.cursor(cursor_factory=psycopg2.extras.RealDictCursor))
 
 
+_pool = None
+_pool_lock = threading.Lock()
+POOL_MAX = int(os.environ.get("EXAMFLOW_PG_POOL_MAX") or 8)
+
+
+def _connection_kwargs():
+    return {"connect_timeout": 10, "application_name": "examflow",
+            "keepalives": 1, "keepalives_idle": 30, "keepalives_interval": 10,
+            "keepalives_count": 3}
+
+
+def _get_pool():
+    """One small warm pool per process.
+
+    A serverless request used to pay a fresh TCP + TLS handshake (and sometimes a
+    Neon wake-up) before it could run a single query; reusing pooled connections
+    removes that cost from every request after the first.
+    """
+    global _pool
+    if _pool is None:
+        with _pool_lock:
+            if _pool is None:
+                from psycopg2 import pool as pgpool
+                url = _normalise_url(configured_url())
+                _pool = pgpool.ThreadedConnectionPool(1, POOL_MAX, url, **_connection_kwargs())
+    return _pool
+
+
 def connect():
     if psycopg2 is None:  # pragma: no cover
         raise RuntimeError("psycopg2 is not installed: %s" % DRIVER_ERROR)
-    url = _normalise_url(configured_url())
-    conn = psycopg2.connect(url, connect_timeout=10, application_name="examflow")
-    return PgConnection(conn)
+    global _pool
+    try:
+        pool = _get_pool()
+        raw = pool.getconn()
+        return PgConnection(raw, pool=pool)
+    except Exception:
+        # A stale pool (database restarted, credentials rotated) must not break the
+        # request: drop it and fall back to a direct connection.
+        with _pool_lock:
+            stale, _pool = _pool, None
+        if stale is not None:
+            try:
+                stale.closeall()
+            except Exception:
+                pass
+        url = _normalise_url(configured_url())
+        conn = psycopg2.connect(url, **_connection_kwargs())
+        return PgConnection(conn)

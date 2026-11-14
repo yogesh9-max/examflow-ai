@@ -1059,9 +1059,11 @@
   async function start() {
     if (!App.state.token) { renderLogin(); return; }
     try {
-      const me = await api('/api/auth/me');
+      // Two independent lookups: fetch them together so the shell is not paying
+      // for two round trips in series before the first page even starts.
+      const [me, meta] = await Promise.all([api('/api/auth/me'), api('/api/meta')]);
       App.state.user = me.user;
-      App.state.meta = await api('/api/meta');
+      App.state.meta = meta;
     } catch (err) {
       App.state.token = null;
       localStorage.removeItem('examflow_token');
