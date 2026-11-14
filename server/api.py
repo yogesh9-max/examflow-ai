@@ -503,34 +503,49 @@ def dashboard(conn, user):
     school_id = user.get("school_id") if user["role"] != "Super Admin" else None
     where, args = ("WHERE school_id = ?", [school_id]) if school_id else ("", [])
 
-    def one(sql, params=()):
-        return conn.execute(sql, params).fetchone()["c"]
+    # One statement, one round trip: the counters used to cost a dozen separate
+    # round trips, which dominated page load against a managed database.
+    conditions = ""
+    if where:
+        conditions = " WHERE school_id = ?"
+    counts_row = conn.execute(
+        f"""SELECT
+              (SELECT COUNT(*) FROM schools) AS schools,
+              (SELECT COUNT(*) FROM departments{conditions}) AS departments,
+              (SELECT COUNT(*) FROM examinations{conditions}) AS examinations,
+              (SELECT COUNT(*) FROM student_groups{conditions}) AS student_groups,
+              (SELECT COALESCE(SUM(student_count),0) FROM student_groups{conditions}) AS students,
+              (SELECT COUNT(*) FROM rooms{conditions}) AS rooms,
+              (SELECT COUNT(*) FROM invigilators{conditions}) AS invigilators,
+              (SELECT COUNT(*) FROM examinations{conditions + (" AND" if where else " WHERE")} status='Scheduled') AS scheduled,
+              (SELECT COUNT(*) FROM examinations{conditions + (" AND" if where else " WHERE")} COALESCE(status,'Pending')!='Scheduled') AS pending,
+              (SELECT COUNT(*) FROM conflict_logs WHERE resolution_status='Open') AS conflicts,
+              (SELECT COUNT(*) FROM scheduling_runs) AS runs,
+              (SELECT COUNT(*) FROM scheduling_runs WHERE status='Published') AS published""",
+        tuple(args) * 8 if where else ()).fetchone()
 
-    counts = {
-        "schools": 1 if school_id else one("SELECT COUNT(*) c FROM schools"),
-        "departments": one(f"SELECT COUNT(*) c FROM departments {where}", args),
-        "examinations": one(f"SELECT COUNT(*) c FROM examinations {where}", args),
-        "student_groups": one(f"SELECT COUNT(*) c FROM student_groups {where}", args),
-        "students": one(f"SELECT COALESCE(SUM(student_count),0) c FROM student_groups {where}", args),
-        "rooms": one(f"SELECT COUNT(*) c FROM rooms {where}", args),
-        "invigilators": one(f"SELECT COUNT(*) c FROM invigilators {where}", args),
-        "scheduled": one(f"SELECT COUNT(*) c FROM examinations {where} "
-                         + ("AND" if where else "WHERE") + " status='Scheduled'", args),
-        "pending": one(f"SELECT COUNT(*) c FROM examinations {where} "
-                       + ("AND" if where else "WHERE") + " COALESCE(status,'Pending')!='Scheduled'", args),
-        "conflicts": one("SELECT COUNT(*) c FROM conflict_logs WHERE resolution_status='Open'"),
-        "runs": one("SELECT COUNT(*) c FROM scheduling_runs"),
-        "published": one("SELECT COUNT(*) c FROM scheduling_runs WHERE status='Published'"),
-    }
+    counts = {key: counts_row[key] for key in (
+        "schools", "departments", "examinations", "student_groups", "students", "rooms",
+        "invigilators", "scheduled", "pending", "conflicts", "runs", "published")}
+    if school_id:
+        counts["schools"] = 1
 
     exams_by_school = [{"label": r["school_code"], "value": r["c"]} for r in conn.execute(
         "SELECT s.school_code, COUNT(e.id) c FROM schools s LEFT JOIN examinations e "
         "ON e.school_id = s.id GROUP BY s.id ORDER BY c DESC").fetchall()]
 
-    latest = conn.execute(
-        "SELECT * FROM scheduling_runs WHERE solver_status LIKE 'FEASIBLE%' OR solver_status='INFEASIBLE' "
-        "ORDER BY created_at DESC LIMIT 1").fetchone()
+    # The latest feasible run and the CSP/First-Fit comparison runs all come from
+    # one table: read recent runs once instead of three separate round trips.
+    recent_runs = conn.execute(
+        "SELECT * FROM scheduling_runs ORDER BY created_at DESC LIMIT 25").fetchall()
+    latest = next((r for r in recent_runs
+                   if (r["solver_status"] or "").upper().startswith("FEASIBLE")
+                   or r["solver_status"] == "INFEASIBLE"), None)
     latest_id = latest["id"] if latest else None
+    csp_run = next((r for r in recent_runs
+                    if (r["algorithm_name"] or "").startswith("CSP")), None)
+    ff_run = next((r for r in recent_runs
+                   if (r["algorithm_name"] or "").startswith("First-Fit")), None)
     daily, room_usage, workload = [], [], []
     if latest_id:
         daily = [{"label": r["d"], "value": r["c"]} for r in conn.execute(
@@ -549,12 +564,6 @@ def dashboard(conn, user):
                JOIN invigilators i ON i.id = ia.invigilator_id
                WHERE sa.scheduling_run_id=? GROUP BY i.id ORDER BY c DESC""", (latest_id,)).fetchall()]
 
-    csp_run = conn.execute(
-        "SELECT * FROM scheduling_runs WHERE algorithm_name LIKE 'CSP%' ORDER BY created_at DESC LIMIT 1"
-    ).fetchone()
-    ff_run = conn.execute(
-        "SELECT * FROM scheduling_runs WHERE algorithm_name LIKE 'First-Fit%' ORDER BY created_at DESC "
-        "LIMIT 1").fetchone()
     comparison = None
     if csp_run and ff_run:
         comparison = solver_service.compare_runs(conn, ff_run["id"], csp_run["id"])

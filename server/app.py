@@ -225,18 +225,15 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/ping":
             import time as _t
-            t0 = _t.time()
+            started = _t.time()
             conn = db.connect()
-            t1 = _t.time()
-            marks = []
-            for _ in range(5):
-                a = _t.time()
-                conn.execute("SELECT 1 AS x").fetchone()
-                marks.append(round((_t.time() - a) * 1000, 1))
+            connected = _t.time()
+            conn.execute("SELECT 1 AS x").fetchone()
+            queried = _t.time()
             conn.close()
-            return self._send(200, {"connect_ms": round((t1 - t0) * 1000, 1),
-                                    "query_ms": marks,
-                                    "pooled": db.pgdb_pooled() if hasattr(db, "pgdb_pooled") else None})
+            return self._send(200, {"ok": True,
+                                    "connect_ms": round((connected - started) * 1000, 1),
+                                    "first_query_ms": round((queried - connected) * 1000, 1)})
 
         if path == "/api/integrations":
             return self._send(200, {"status": "ok", "services": integrations.status()})
