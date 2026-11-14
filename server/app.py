@@ -36,6 +36,33 @@ def _password_sign_in_available():
     if AUTH_MODE == "otp" and mailer.ENABLED:
         return False
     return True
+DB_STATUS_TABLES = ("schools", "departments", "users", "examinations", "student_groups",
+                    "rooms", "invigilators", "scheduled_sessions")
+
+
+def _database_status():
+    """Live database health: row counts plus where the durable copy lives."""
+    info = {"tables": {}, "records": 0}
+    try:
+        conn = db.connect()
+        try:
+            for table in DB_STATUS_TABLES:
+                try:
+                    count = conn.execute("SELECT COUNT(*) AS n FROM %s" % table).fetchone()["n"]
+                except Exception:
+                    continue
+                info["tables"][table] = count
+                info["records"] += count
+        finally:
+            conn.close()
+        info["reachable"] = True
+    except Exception as exc:  # pragma: no cover - diagnostics only
+        info["reachable"] = False
+        info["error"] = str(exc)[:200]
+    info.update(persistence.status())
+    return info
+
+
 STATIC = os.path.join(ROOT, "static")
 CONTENT_TYPES = {".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8",
                  ".js": "application/javascript; charset=utf-8", ".svg": "image/svg+xml",
@@ -74,7 +101,8 @@ class Handler(BaseHTTPRequestHandler):
     def _send(self, status, payload=None, content_type="application/json", raw=None):
         path = self.path or ""
         if (status < 400 and self.command in ("POST", "PUT", "PATCH", "DELETE")
-                and path.startswith("/api") and not path.startswith("/api/auth")):
+                and path.startswith("/api")):
+            # every accepted write has to survive the next cold start
             persistence.save_now()
         body = raw if raw is not None else (
             json.dumps(payload).encode("utf-8") if payload is not None else b"")
@@ -114,6 +142,10 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/health":
             return self._send(200, {"status": "ok", "app": "ExamFlow AI"})
+
+        if path == "/api/status":
+            return self._send(200, {"status": "ok", "app": "ExamFlow AI",
+                                    "database": _database_status()})
 
         conn = db.connect()
         try:

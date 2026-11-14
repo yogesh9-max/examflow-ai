@@ -36,6 +36,10 @@ DB_PATH = os.environ.get("EXAMFLOW_DB") or os.path.join(
 _lock = threading.RLock()
 _restored = False
 _last_digest = None
+LAST_SAVE_AT = None
+LAST_ERROR = None
+SAVE_COUNT = 0
+DEBOUNCE_SECONDS = float(os.environ.get("EXAMFLOW_SNAPSHOT_DEBOUNCE") or 2)
 
 
 class SnapshotError(Exception):
@@ -109,10 +113,25 @@ def ensure_restored():
         return True
 
 
-def save_now():
+def status():
+    """Non-secret summary of the durable store, used by the health endpoint."""
+    return {
+        "enabled": ENABLED,
+        "repository": REPO or None,
+        "branch": BRANCH if ENABLED else None,
+        "snapshot_path": SNAPSHOT_PATH if ENABLED else None,
+        "database_bytes": os.path.getsize(DB_PATH) if os.path.exists(DB_PATH) else 0,
+        "restored_this_instance": _restored,
+        "saves": SAVE_COUNT,
+        "last_save_at": LAST_SAVE_AT,
+        "last_error": LAST_ERROR,
+    }
+
+
+def save_now(force=False):
     """Commit the current database file to the snapshot repository (no-op when the
     bytes have not changed or persistence is not configured)."""
-    global _last_digest
+    global _last_digest, LAST_SAVE_AT, LAST_ERROR, SAVE_COUNT
     if not ENABLED:
         return False
     with _lock:
@@ -125,14 +144,25 @@ def save_now():
         digest = hashlib.sha256(payload).hexdigest()
         if digest == _last_digest:
             return False
+        if not force and LAST_SAVE_AT:
+            try:
+                from datetime import datetime, timezone
+                last = datetime.fromisoformat(LAST_SAVE_AT)
+                age = (datetime.now(timezone.utc) - last).total_seconds()
+                if age < DEBOUNCE_SECONDS:
+                    return False
+            except ValueError:
+                pass
         try:
             current = _api("/repos/%s/contents/%s?ref=%s" % (REPO, SNAPSHOT_PATH, BRANCH))
             sha = current.get("sha")
         except urllib.error.HTTPError as exc:
+            LAST_ERROR = "read %s" % exc.code
             if exc.code != 404:
                 return False
             sha = None
         except urllib.error.URLError:
+            LAST_ERROR = "read network"
             return False
         body = {"message": "ExamFlow data snapshot", "branch": BRANCH,
                 "content": base64.b64encode(payload).decode("ascii")}
@@ -140,7 +170,15 @@ def save_now():
             body["sha"] = sha
         try:
             _api("/repos/%s/contents/%s" % (REPO, SNAPSHOT_PATH), "PUT", body)
-        except (urllib.error.URLError, urllib.error.HTTPError):
+        except urllib.error.HTTPError as exc:
+            LAST_ERROR = "write %s" % exc.code
             return False
+        except urllib.error.URLError:
+            LAST_ERROR = "write network"
+            return False
+        from datetime import datetime, timezone
         _last_digest = digest
+        LAST_ERROR = None
+        LAST_SAVE_AT = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+        SAVE_COUNT += 1
         return True
