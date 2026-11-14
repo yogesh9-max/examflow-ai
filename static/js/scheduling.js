@@ -731,7 +731,7 @@
               ? barList(perInv.map((p) => ({ label: p.name, value: p.duties })))
               : h('div', { class: 'empty', text: 'No duties recorded.' })),
             card('Distribution', perInv.length
-              ? h('div', { html: chartBar(perInv.slice(0, 12).map((p) => ({ label: p.name.split(' ').slice(-1)[0], value: p.duties })), { height: 200, color: '#0ea5e9' }) })
+              ? h('div', { html: chartBar(perInv.slice(0, 12).map((p) => ({ label: p.name.split(' ').slice(-1)[0], value: p.duties })), { height: 200, color: '#b2434f' }) })
               : h('div', { class: 'empty', text: 'No duties recorded.' }))));
 
           const over = fair.overloaded || [];
@@ -844,11 +844,11 @@
 
         host.appendChild(h('div', { class: 'grid two mt16' },
           card('Soft constraint penalty', h('div', { html: chartBar([
-            { label: 'First-Fit', value: b.soft_constraint_penalty, color: '#94a3b8' },
-            { label: 'AI search', value: c.soft_constraint_penalty, color: '#2563eb' },
+            { label: 'First-Fit', value: b.soft_constraint_penalty, color: '#9aa0a8' },
+            { label: 'AI search', value: c.soft_constraint_penalty, color: '#c8102e' },
           ], { height: 180, label: 'Penalty comparison' }) }), 'Lower is better'),
           card('Workload balance', h('div', { html: chartBar([
-            { label: 'First-Fit SD', value: b.workload_standard_deviation, color: '#94a3b8' },
+            { label: 'First-Fit SD', value: b.workload_standard_deviation, color: '#9aa0a8' },
             { label: 'AI SD', value: c.workload_standard_deviation, color: '#16a34a' },
           ], { height: 180, label: 'Standard deviation comparison' }) }), 'Lower is fairer')));
 

@@ -337,13 +337,13 @@
     const innerW = width - pad.l - pad.r, innerH = height - pad.t - pad.b;
     const barW = Math.max(6, (innerW / Math.max(data.length, 1)) * 0.58);
     const step = innerW / Math.max(data.length, 1);
-    const color = opts.color || '#2563eb';
+    const color = opts.color || '#c8102e';
     const ticks = 4;
     let svg = `<svg class="chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="${esc(opts.label || 'Bar chart')}" preserveAspectRatio="none">`;
     for (let i = 0; i <= ticks; i += 1) {
       const y = pad.t + innerH - (innerH * i / ticks);
-      svg += `<line x1="${pad.l}" y1="${y}" x2="${width - pad.r}" y2="${y}" stroke="#eef2f7"/>`;
-      svg += `<text x="${pad.l - 6}" y="${y + 3}" font-size="9.5" fill="#94a3b8" text-anchor="end">${Math.round(max * i / ticks)}</text>`;
+      svg += `<line x1="${pad.l}" y1="${y}" x2="${width - pad.r}" y2="${y}" stroke="#f1f1f3"/>`;
+      svg += `<text x="${pad.l - 6}" y="${y + 3}" font-size="9.5" fill="#9aa0a8" text-anchor="end">${Math.round(max * i / ticks)}</text>`;
     }
     data.forEach((d, i) => {
       const value = Number(d.value) || 0;
@@ -352,7 +352,7 @@
       const y = pad.t + innerH - barH;
       const fill = d.color || color;
       svg += `<rect x="${x}" y="${y}" width="${barW}" height="${Math.max(barH, 1)}" rx="4" fill="${fill}"><title>${esc(d.label)}: ${value}</title></rect>`;
-      svg += `<text x="${x + barW / 2}" y="${height - 10}" font-size="9.5" fill="#64748b" text-anchor="middle">${esc(String(d.label).slice(0, 12))}</text>`;
+      svg += `<text x="${x + barW / 2}" y="${height - 10}" font-size="9.5" fill="#6b7280" text-anchor="middle">${esc(String(d.label).slice(0, 12))}</text>`;
       if (value) svg += `<text x="${x + barW / 2}" y="${y - 4}" font-size="9.5" fill="#475569" text-anchor="middle">${value}</text>`;
     });
     return `${svg}</svg>`;
@@ -371,14 +371,14 @@
     let svg = `<svg class="chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="${esc(opts.label || 'Trend')}" preserveAspectRatio="none">`;
     for (let i = 0; i <= 3; i += 1) {
       const y = pad.t + innerH - (innerH * i / 3);
-      svg += `<line x1="${pad.l}" y1="${y}" x2="${width - pad.r}" y2="${y}" stroke="#eef2f7"/>`;
-      svg += `<text x="${pad.l - 6}" y="${y + 3}" font-size="9.5" fill="#94a3b8" text-anchor="end">${Math.round(max * i / 3)}</text>`;
+      svg += `<line x1="${pad.l}" y1="${y}" x2="${width - pad.r}" y2="${y}" stroke="#f1f1f3"/>`;
+      svg += `<text x="${pad.l - 6}" y="${y + 3}" font-size="9.5" fill="#9aa0a8" text-anchor="end">${Math.round(max * i / 3)}</text>`;
     }
     const path = points.map(([x, y], i) => `${i ? 'L' : 'M'}${x.toFixed(1)},${y.toFixed(1)}`).join(' ');
-    svg += `<path d="${path}" fill="none" stroke="${opts.color || '#2563eb'}" stroke-width="2.2" stroke-linejoin="round"/>`;
+    svg += `<path d="${path}" fill="none" stroke="${opts.color || '#c8102e'}" stroke-width="2.2" stroke-linejoin="round"/>`;
     points.forEach(([x, y], i) => {
-      svg += `<circle cx="${x}" cy="${y}" r="3.4" fill="#fff" stroke="${opts.color || '#2563eb'}" stroke-width="2"><title>${esc(data[i].label)}: ${data[i].value}</title></circle>`;
-      svg += `<text x="${x}" y="${height - 8}" font-size="9.5" fill="#64748b" text-anchor="middle">${esc(String(data[i].label).slice(5, 11))}</text>`;
+      svg += `<circle cx="${x}" cy="${y}" r="3.4" fill="#fff" stroke="${opts.color || '#c8102e'}" stroke-width="2"><title>${esc(data[i].label)}: ${data[i].value}</title></circle>`;
+      svg += `<text x="${x}" y="${height - 8}" font-size="9.5" fill="#6b7280" text-anchor="middle">${esc(String(data[i].label).slice(5, 11))}</text>`;
     });
     return `${svg}</svg>`;
   }
@@ -386,7 +386,7 @@
   function chartDonut(data, opts = {}) {
     const size = opts.size || 168, r = size / 2 - 12, cx = size / 2, cy = size / 2;
     const total = data.reduce((sum, d) => sum + (Number(d.value) || 0), 0) || 1;
-    const colors = opts.colors || ['#2563eb', '#0ea5e9', '#16a34a', '#f59e0b', '#dc2626', '#8b5cf6'];
+    const colors = opts.colors || ['#c8102e', '#b2434f', '#16a34a', '#f59e0b', '#dc2626', '#8b5cf6'];
     let angle = -Math.PI / 2, svg = `<svg class="chart" viewBox="0 0 ${size} ${size}" role="img" aria-label="${esc(opts.label || 'Distribution')}">`;
     data.forEach((d, i) => {
       const slice = (Number(d.value) || 0) / total * Math.PI * 2;
@@ -399,8 +399,8 @@
       angle += slice;
     });
     svg += `<circle cx="${cx}" cy="${cy}" r="${r * 0.58}" fill="#fff"/>`;
-    svg += `<text x="${cx}" y="${cy - 2}" text-anchor="middle" font-size="19" font-weight="700" fill="#1e293b">${esc(String(opts.centerValue !== undefined ? opts.centerValue : total))}</text>`;
-    svg += `<text x="${cx}" y="${cy + 14}" text-anchor="middle" font-size="9.5" fill="#64748b">${esc(opts.centerLabel || 'total')}</text>`;
+    svg += `<text x="${cx}" y="${cy - 2}" text-anchor="middle" font-size="19" font-weight="700" fill="#2d3239">${esc(String(opts.centerValue !== undefined ? opts.centerValue : total))}</text>`;
+    svg += `<text x="${cx}" y="${cy + 14}" text-anchor="middle" font-size="9.5" fill="#6b7280">${esc(opts.centerLabel || 'total')}</text>`;
     const legend = `<div class="legend">${data.map((d, i) => `<span><i style="background:${colors[i % colors.length]}"></i>${esc(d.label)} · ${d.value}</span>`).join('')}</div>`;
     return `<div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap"><div style="width:${size}px;flex:none">${svg}</svg></div><div style="flex:1;min-width:130px">${legend}</div></div>`;
   }
@@ -413,7 +413,7 @@
       wrap.appendChild(h('div', { class: 'bar-row' },
         h('span', { class: 'truncate', text: row.label, title: row.label }),
         h('div', { class: 'bar-track' },
-          h('div', { class: 'bar-fill', style: `width:${pct}%;background:${row.color || opts.color || '#2563eb'}` })),
+          h('div', { class: 'bar-fill', style: `width:${pct}%;background:${row.color || opts.color || '#c8102e'}` })),
         h('span', { class: 'mono', style: 'text-align:right', text: fmtNum(row.value, 2) })));
     }
     return wrap;
@@ -702,7 +702,7 @@
     return h('div', { class: 'brand', style: 'padding:0;border:0' },
       h('div', { class: 'brand-mark', text: 'E' }),
       h('div', null, h('div', { class: 'brand-name', text: 'ExamFlow AI' }),
-        h('div', { class: 'brand-sub', text: 'Multi-school examination planning' })));
+        h('div', { class: 'brand-sub', text: 'LPU examination management' })));
   }
 
   function renderLogin(message) {
@@ -724,7 +724,7 @@
           point('Separate sign-in pages for administration and staff'),
           point('Role separation enforced on the server, not just the menu'),
           point('Every decision stored for audit')),
-        h('div', { class: 'small', style: 'margin-top:auto;color:#94a3b8', text: 'Lovely Professional University \u00b7 Examination Office' })),
+        h('div', { class: 'small', style: 'margin-top:auto;color:#9aa0a8', text: 'Lovely Professional University \u00b7 Examination Office' })),
       h('div', { class: 'login-form-wrap' },
         h('div', { class: 'login-form' },
           h('h1', { text: 'Choose your portal' }),
@@ -963,7 +963,7 @@
         h('h2', { text: cfg.lead }),
         h('p', { text: cfg.body }),
         h('div', { class: 'login-points' }, cfg.points.map(point)),
-        h('div', { class: 'small', style: 'margin-top:auto;color:#94a3b8', text: 'Lovely Professional University \u00b7 Examination Office' })),
+        h('div', { class: 'small', style: 'margin-top:auto;color:#9aa0a8', text: 'Lovely Professional University \u00b7 Examination Office' })),
       h('div', { class: 'login-form-wrap' }, form)));
   }
 
@@ -1018,10 +1018,10 @@
       splashHost.innerHTML =
         '<div style="min-height:70vh;display:flex;flex-direction:column;align-items:center;' +
         'justify-content:center;gap:14px;font-family:system-ui,-apple-system,Segoe UI,sans-serif">' +
-        '<div style="width:38px;height:38px;border-radius:10px;background:#2563eb;color:#fff;' +
+        '<div style="width:38px;height:38px;border-radius:10px;background:#c8102e;color:#fff;' +
         'display:flex;align-items:center;justify-content:center;font-weight:700;font-size:19px">E</div>' +
-        '<div style="color:#0f172a;font-weight:600">ExamFlow AI</div>' +
-        '<div style="color:#64748b;font-size:13px">Starting up, one moment…</div></div>';
+        '<div style="color:#1f2328;font-weight:600">ExamFlow AI</div>' +
+        '<div style="color:#6b7280;font-size:13px">Starting up, one moment…</div></div>';
     }
     takeGoogleToken();
     try {

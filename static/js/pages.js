@@ -228,7 +228,7 @@
 
       view.appendChild(h('div', { class: 'grid two mt16' },
         card('Daily examination load', data.daily.length
-          ? h('div', { html: chartBar(data.daily.map((d) => ({ label: String(d.label).slice(5), value: d.value })), { height: 200, color: '#0ea5e9', label: 'Examinations per day' }) })
+          ? h('div', { html: chartBar(data.daily.map((d) => ({ label: String(d.label).slice(5), value: d.value })), { height: 200, color: '#b2434f', label: 'Examinations per day' }) })
           : h('div', { class: 'empty', text: 'Generate a timetable to see daily load.' }), 'Latest run'),
         card('Invigilator workload', data.workload.length
           ? barList(data.workload.slice(0, 9))
@@ -255,12 +255,12 @@
           h('div', { class: 'grid two' },
             h('div', null, h('div', { class: 'small muted', text: `First-Fit penalty ${fmtNum(b.soft_constraint_penalty, 2)} · fairness ${fmtNum(b.fairness_score, 1)}` }),
               h('div', { html: chartBar([
-                { label: 'First-Fit', value: b.soft_constraint_penalty, color: '#94a3b8' },
-                { label: 'CSP AI', value: cand.soft_constraint_penalty, color: '#2563eb' },
+                { label: 'First-Fit', value: b.soft_constraint_penalty, color: '#9aa0a8' },
+                { label: 'CSP AI', value: cand.soft_constraint_penalty, color: '#c8102e' },
               ], { height: 170, label: 'Soft constraint penalty' }) })),
             h('div', null, h('div', { class: 'small muted', text: `CSP soft penalty ${fmtNum(cand.soft_constraint_penalty, 2)} · fairness ${fmtNum(cand.fairness_score, 1)}` }),
               h('div', { html: chartBar([
-                { label: 'First-Fit', value: b.workload_standard_deviation, color: '#94a3b8' },
+                { label: 'First-Fit', value: b.workload_standard_deviation, color: '#9aa0a8' },
                 { label: 'CSP AI', value: cand.workload_standard_deviation, color: '#16a34a' },
               ], { height: 170, label: 'Workload standard deviation' }) }))),
           'Lower penalty and deviation is better')));
