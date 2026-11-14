@@ -1,6 +1,6 @@
-"""Realistic demonstration dataset for ExamFlow AI.
+"""Initial LPU examination-office dataset for ExamFlow AI.
 
-All names are fictional. The data is intentionally seeded with the awkward cases
+The data is intentionally seeded with the awkward cases
 the engine must handle: a room that is too small for every examination in its
 school, several examinations sharing a student group, faculty on leave, and very
 different duty limits.
@@ -220,7 +220,7 @@ def seed_dataset(conn):
              1, now))
 
     conn.commit()
-    print("Seeded demonstration dataset.")
+    print("Seeded the initial examination dataset.")
 
 
 def seed_database():

@@ -1,9 +1,8 @@
 """Vercel entry point.
 
-Vercel's filesystem is read-only apart from /tmp, so the SQLite database lives
-in /tmp and is seeded on a cold start. That keeps the deployment fully working
-as a demo; data resets whenever the function instance is recycled. For durable
-storage point EXAMFLOW_DB at a mounted volume or move to Postgres.
+With ``DATABASE_URL`` set the whole app runs on the managed Postgres instance and
+the schema/migration pass runs on every cold start so additive changes land.
+Without it the SQLite file lives in /tmp and is seeded on a cold start.
 """
 import os
 import sys
@@ -16,7 +15,7 @@ os.environ.setdefault("EXAMFLOW_QUIET", "1")
 
 import db  # noqa: E402
 
-if not os.path.exists(db.DB_PATH):
+if db.using_postgres() or not os.path.exists(db.DB_PATH):
     db.init_db(seed=os.environ.get("EXAMFLOW_SEED", "1") != "0")
 
 from wsgi import application  # noqa: E402,F401

@@ -831,8 +831,8 @@
         card('Data in this workspace', h('div', { class: 'grid two' },
           kpi('Schools', dash.counts?.schools || 0), kpi('Examinations', dash.counts?.examinations || 0),
           kpi('Rooms', dash.counts?.rooms || 0), kpi('Invigilators', dash.counts?.invigilators || 0))),
-        card('Demonstration data', h('div', null,
-          h('p', { class: 'small muted', text: 'Every school, faculty member and student group in this build is fictional demonstration data, seeded so the conflict detection and optimisation behaviour can be exercised.' }),
+        card('Examination office controls', h('div', null,
+          h('p', { class: 'small muted', text: 'Check the constraint policies that shape every generated plan, and trace who changed what in the audit log.' }),
           h('div', { class: 'mt12 row wrap' },
             h('button', { class: 'btn secondary sm', text: 'Review policies', onclick: () => navigate('policies') }),
             h('button', { class: 'btn secondary sm', text: 'Review audit log', onclick: () => navigate('audit') }))))));

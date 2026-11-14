@@ -362,14 +362,17 @@ class Handler(BaseHTTPRequestHandler):
                 if not _password_sign_in_available():
                     raise auth.Unauthorized(
                         "Password sign-in is switched off on this deployment.")
-                email = (body.get("email") or "").strip().lower()
+                identifier = (body.get("identifier") or body.get("email")
+                              or body.get("phone") or "").strip()
+                if not identifier:
+                    raise auth.ValidationError("Enter your email address or mobile number.")
                 allowed, _remaining = integrations.rate_limit(
-                    "login:%s:%s" % (self.client_address[0], email), 10, 600)
+                    "login:%s:%s" % (self.client_address[0], identifier.lower()), 10, 600)
                 if not allowed:
                     raise auth.Unauthorized("Too many sign-in attempts. Try again in a few minutes.")
-                user = auth.authenticate(email, body.get("password") or "")
+                user = auth.authenticate(identifier, body.get("password") or "")
                 if not user:
-                    raise auth.Unauthorized("Email or password is incorrect.")
+                    raise auth.Unauthorized("That email/mobile and password do not match an account.")
                 allowed_roles = {"admin": ("Super Admin", "School Admin"),
                                  "user": ("Invigilator",),
                                  "student": ("Student",)}.get(portal)
@@ -394,6 +397,23 @@ class Handler(BaseHTTPRequestHandler):
 
             if path == "/api/auth/me":
                 return self._send(200, {"user": user})
+
+            if method in ("POST", "PUT") and path == "/api/auth/mobile":
+                body = self._json_body()
+                mobile = auth.normalise_mobile(body.get("phone") or "")
+                if not mobile:
+                    raise auth.ValidationError(
+                        "Enter a 10-digit Indian mobile number, for example 98765 43210.")
+                taken = conn.execute(
+                    "SELECT id FROM users WHERE phone = ? AND id <> ?", (mobile, user["id"])).fetchone()
+                if taken:
+                    raise auth.ValidationError("That mobile number is already linked to another account.")
+                conn.execute("UPDATE users SET phone = ? WHERE id = ?", (mobile, user["id"]))
+                db.audit(conn, user, "Mobile number linked for sign-in", "user", user["id"], mobile)
+                conn.commit()
+                user = dict(user, phone=mobile)
+                return self._send(200, {"user": user})
+
             if method == "POST" and path == "/api/auth/logout":
                 db.audit(conn, user, "User logout", "user", user["id"])
                 conn.commit()
@@ -560,7 +580,6 @@ def main():
     db.init_db(seed=os.environ.get("EXAMFLOW_SEED", "1") != "0")
     server = ThreadingHTTPServer(("0.0.0.0", port), Handler)
     print(f"ExamFlow AI running on http://localhost:{port}")
-    print("Demo logins: admin@examflow.ai / Admin@123  ·  rita@examflow.ai / Examflow@123")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

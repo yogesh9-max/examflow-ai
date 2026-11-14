@@ -542,18 +542,40 @@
   }
 
   function toggleUserMenu() {
-    const menu = modal({
+    const phone = App.state.user.phone;
+    let menu = null;
+    const menuNode = h('div', null,
+      h('dl', { class: 'kv' },
+        h('dt', { text: 'Name' }), h('dd', { text: App.state.user.full_name }),
+        h('dt', { text: 'Email' }), h('dd', { text: App.state.user.email }),
+        h('dt', { text: 'Mobile' }), h('dd', { text: phone ? '+91 ' + phone : 'Not linked yet' }),
+        h('dt', { text: 'Role' }), h('dd', { text: App.state.user.role }),
+        h('dt', { text: 'School' }), h('dd', { text: App.state.user.school_id ? schoolName(App.state.user.school_id) : 'All schools' })));
+    menu = modal({
       title: 'Account',
-      body: h('div', null,
-        h('dl', { class: 'kv' },
-          h('dt', { text: 'Name' }), h('dd', { text: App.state.user.full_name }),
-          h('dt', { text: 'Email' }), h('dd', { text: App.state.user.email }),
-          h('dt', { text: 'Role' }), h('dd', { text: App.state.user.role }),
-          h('dt', { text: 'School' }), h('dd', { text: App.state.user.school_id ? schoolName(App.state.user.school_id) : 'All schools' }))),
+      body: menuNode,
       footer: [
+        h('button', { class: 'btn secondary', text: phone ? 'Change mobile' : 'Link mobile for sign-in',
+          onclick: () => { menu.close(); openMobileForm(); } }),
         h('button', { class: 'btn secondary', text: 'Settings', onclick: () => { menu.close(); navigate('settings'); } }),
         h('button', { class: 'btn danger', text: 'Logout', onclick: () => { menu.close(); logout(true); } }),
       ],
+    });
+  }
+
+  function openMobileForm() {
+    formModal({
+      title: 'Mobile number for sign-in',
+      intro: 'Link a 10-digit Indian mobile number and you can sign in with it instead of your email address.',
+      submitLabel: 'Save number',
+      fields: [{ name: 'phone', label: 'Mobile number', placeholder: '98765 43210',
+        help: 'One number per account, no OTP needed to sign in later.', full: true }],
+      values: { phone: App.state.user.phone || '' },
+      onSubmit: async (payload) => {
+        const data = await api('/api/auth/mobile', { method: 'POST', body: payload });
+        App.state.user = data.user;
+        toast('Mobile number linked to your account.', 'ok');
+      },
     });
   }
 
@@ -702,7 +724,7 @@
           point('Separate sign-in pages for administration and staff'),
           point('Role separation enforced on the server, not just the menu'),
           point('Every decision stored for audit')),
-        h('div', { class: 'small', style: 'margin-top:auto;color:#94a3b8', text: 'Demonstration build · fictional data' })),
+        h('div', { class: 'small', style: 'margin-top:auto;color:#94a3b8', text: 'Lovely Professional University \u00b7 Examination Office' })),
       h('div', { class: 'login-form-wrap' },
         h('div', { class: 'login-form' },
           h('h1', { text: 'Choose your portal' }),
@@ -842,7 +864,7 @@
   function renderPortalLogin(portal, message) {
     const cfg = PORTALS[portal];
     const root = document.getElementById('root');
-    const email = inputEl({ type: 'email', placeholder: 'you@university.edu', autocomplete: 'username' });
+    const email = inputEl({ type: 'text', placeholder: 'you@lpu.co.in or 98765 43210', autocomplete: 'username' });
     const password = inputEl({ type: 'password', placeholder: '\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022', autocomplete: 'current-password' });
     const error = h('div', { class: 'alert err', style: message ? 'display:flex' : 'display:none', text: message || '' });
     const submit = h('button', { class: 'btn block', style: 'margin-top:6px', text: 'Sign in' });
@@ -859,7 +881,7 @@
       h('h1', { text: cfg.heading }),
       h('p', { class: 'muted small', style: 'margin-bottom:18px', text: cfg.intro }),
       error,
-      passwordOn ? field('Email address', email) : null,
+      passwordOn ? field('Email or mobile number', email, 'Use the mobile number you linked to your account to sign in without typing an email.') : null,
       passwordOn ? field('Password', password) : null,
       passwordOn ? submit : null,
       passwordOn ? switchMode : null,
@@ -878,10 +900,7 @@
                             : (providers.google ? 'Sign in with your Google account.'
                                                 : 'Sign-in is unavailable until a provider is configured.') }),
       h('a', { class: 'portal-switch', href: cfg.otherHref, text: cfg.otherText }),
-      passwordOn ? h('div', { class: 'demo-box' },
-        h('div', { style: 'margin-bottom:6px;font-weight:600;color:#334155', text: 'Demonstration accounts' }),
-        h('div', null, cfg.demo.map((row) => demoChip(row[0], row[1], row[2], email, password))),
-        h('div', { style: 'margin-top:8px', text: 'Seeded demonstration data \u2014 fictional schools and faculty.' })) : null);
+      passwordOn ? h('div', { class: 'small muted', style: 'margin-top:12px', text: 'Single sign-on with Google is switched on for this deployment once the Examination Office publishes its Google client credentials.' }) : null);
 
     loadGoogleButton(googleSlot, portal);
     const googleError = new URLSearchParams(location.search).get('google_error');
@@ -895,10 +914,18 @@
       error.style.display = 'none';
       submit.disabled = true;
       submit.innerHTML = '<span class="spinner"></span> ' + (createMode ? 'Creating access' : 'Signing in');
+      const identifier = email.value.trim();
+      if (createMode && !identifier.includes('@')) {
+        error.textContent = 'Create the account with your email address. You can add a mobile number afterwards.';
+        error.style.display = 'flex';
+        submit.disabled = false;
+        submit.textContent = 'Create account';
+        return;
+      }
       try {
         const data = await api(createMode ? '/api/auth/gmail' : '/api/auth/login', {
           method: 'POST',
-          body: { email: email.value.trim(), password: password.value, portal: portal },
+          body: { identifier, email: identifier, password: password.value, portal: portal },
         });
         App.state.token = data.token;
         App.state.user = data.user;
@@ -936,7 +963,7 @@
         h('h2', { text: cfg.lead }),
         h('p', { text: cfg.body }),
         h('div', { class: 'login-points' }, cfg.points.map(point)),
-        h('div', { class: 'small', style: 'margin-top:auto;color:#94a3b8', text: 'Demonstration build \u00b7 fictional data' })),
+        h('div', { class: 'small', style: 'margin-top:auto;color:#94a3b8', text: 'Lovely Professional University \u00b7 Examination Office' })),
       h('div', { class: 'login-form-wrap' }, form)));
   }
 

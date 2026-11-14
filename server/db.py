@@ -38,6 +38,7 @@ CREATE TABLE IF NOT EXISTS users (
     school_id TEXT REFERENCES schools(id) ON DELETE SET NULL,
     department_id TEXT,
     is_active INTEGER NOT NULL DEFAULT 1,
+    phone TEXT,
     created_at TEXT NOT NULL
 );
 
@@ -310,6 +311,16 @@ def _ensure_user_columns() -> None:
         if "student_group_id" not in columns:
             conn.execute("ALTER TABLE users ADD COLUMN student_group_id TEXT")
             conn.commit()
+        if "phone" not in columns:
+            conn.execute("ALTER TABLE users ADD COLUMN phone TEXT")
+            conn.commit()
+        # one mobile number per account; partial index keeps NULLs out of the way
+        try:
+            conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS users_phone_key "
+                         "ON users (phone) WHERE phone IS NOT NULL")
+            conn.commit()
+        except Exception:
+            pass
     finally:
         conn.close()
 

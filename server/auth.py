@@ -8,6 +8,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import secrets
 import time
 
@@ -82,9 +83,40 @@ def read_token(token: str):
         return None
 
 
+def normalise_mobile(value: str) -> str:
+    """Return the bare 10-digit mobile number for user input, or '' if it is not one.
+
+    Accepts ``9876543210``, ``+91 98765 43210``, ``098765-43210`` and similar.
+    """
+    digits = re.sub(r"\D", "", value or "")
+    if len(digits) == 12 and digits.startswith("91"):
+        digits = digits[2:]
+    elif len(digits) == 11 and digits.startswith("0"):
+        digits = digits[1:]
+    if len(digits) == 10 and digits[0] in "6789":
+        return digits
+    return ""
+
+
+def is_mobile(identifier: str) -> bool:
+    return "@" not in (identifier or "") and bool(normalise_mobile(identifier))
+
+
+def find_user_row(conn, identifier: str):
+    """Look a user up by email address or by mobile number."""
+    ident = (identifier or "").strip()
+    if "@" in ident:
+        return conn.execute("SELECT * FROM users WHERE lower(email) = ?", (ident.lower(),)).fetchone()
+    mobile = normalise_mobile(ident)
+    if not mobile:
+        return None
+    return conn.execute("SELECT * FROM users WHERE phone = ?", (mobile,)).fetchone()
+
+
 def authenticate(email: str, password: str):
+    """Sign in with an email address or a mobile number plus the password."""
     conn = db.connect()
-    row = conn.execute("SELECT * FROM users WHERE lower(email) = ?", (email.strip().lower(),)).fetchone()
+    row = find_user_row(conn, email)
     conn.close()
     if not row or not row["is_active"]:
         return None
@@ -97,9 +129,9 @@ def authenticate(email: str, password: str):
 
 
 def find_user(email: str):
-    """Active user lookup by email, without a password check (used by code sign-in)."""
+    """Active user lookup by email/mobile, without a password check (used by code sign-in)."""
     conn = db.connect()
-    row = conn.execute("SELECT * FROM users WHERE lower(email) = ?", (email.strip().lower(),)).fetchone()
+    row = find_user_row(conn, email)
     conn.close()
     if not row or not row["is_active"]:
         return None
