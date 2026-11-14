@@ -872,7 +872,7 @@
     const roleName = { admin: 'a school administrator', user: 'an invigilator', student: 'a student' }[portal];
     const modeNote = h('div', { class: 'alert info', style: 'display:none;margin-top:10px' });
     const switchMode = h('button', { class: 'btn ghost block', type: 'button', style: 'margin-top:8px',
-      text: 'New here? Get access with your Gmail' });
+      text: 'New here? Create an account' });
     const googleSlot = h('div', { class: 'google-slot' });
     const providers = App.state.providers || { password: true, google: false };
     const passwordOn = providers.password !== false;
@@ -899,8 +899,7 @@
         text: providers.otp ? 'Sign in with a one-time code sent to your email.'
                             : (providers.google ? 'Sign in with your Google account.'
                                                 : 'Sign-in is unavailable until a provider is configured.') }),
-      h('a', { class: 'portal-switch', href: cfg.otherHref, text: cfg.otherText }),
-      passwordOn ? h('div', { class: 'small muted', style: 'margin-top:12px', text: 'Single sign-on with Google is switched on for this deployment once the Examination Office publishes its Google client credentials.' }) : null);
+      h('a', { class: 'portal-switch', href: cfg.otherHref, text: cfg.otherText }));
 
     loadGoogleButton(googleSlot, portal);
     const googleError = new URLSearchParams(location.search).get('google_error');
@@ -932,25 +931,37 @@
         localStorage.setItem('examflow_token', data.token);
         await start();
       } catch (err) {
-        error.textContent = err.message;
+        const exists = /already has an account/i.test(err.message || '');
+        error.textContent = exists
+          ? 'That email already has an account. Enter its password below and press Sign in.'
+          : err.message;
         error.style.display = 'flex';
+        if (exists) {
+          createMode = false;
+          submit.textContent = 'Sign in';
+          switchMode.textContent = 'New here? Create an account';
+          modeNote.style.display = 'none';
+          password.setAttribute('autocomplete', 'current-password');
+          password.focus();
+        }
         submit.disabled = false;
-        submit.textContent = createMode ? 'Get access with Gmail' : 'Sign in';
+        submit.textContent = createMode ? 'Create account' : 'Sign in';
       } finally {
         submit.disabled = false;
         if (document.body.contains(submit)) {
-          submit.textContent = createMode ? 'Get access with Gmail' : 'Sign in';
+          submit.textContent = createMode ? 'Create account' : 'Sign in';
         }
       }
     });
 
     switchMode.addEventListener('click', () => {
       createMode = !createMode;
-      submit.textContent = createMode ? 'Get access with Gmail' : 'Sign in';
-      switchMode.textContent = createMode ? 'Back to sign in' : 'New here? Get access with your Gmail';
+      submit.textContent = createMode ? 'Create account' : 'Sign in';
+      switchMode.textContent = createMode ? 'Back to sign in' : 'New here? Create an account';
       modeNote.style.display = createMode ? 'flex' : 'none';
-      modeNote.textContent = 'Enter your Gmail address and pick a password (8 or more characters). '
-        + 'Access is created instantly \u2014 no email or verification code needed \u2014 as ' + roleName + '.';
+      modeNote.textContent = 'Enter your full email address and pick a password (8 or more characters). '
+        + 'Access is created instantly \u2014 no email or verification code needed \u2014 as ' + roleName + '. '
+        + 'Already registered? Use Back to sign in.';
       error.style.display = 'none';
       if (createMode) password.setAttribute('autocomplete', 'new-password');
       else password.setAttribute('autocomplete', 'current-password');
