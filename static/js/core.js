@@ -746,12 +746,67 @@
     not_configured: 'Google sign-in is not configured on this deployment yet.',
   };
 
+  function googleIdentityButton(slot, portal, clientId, primary) {
+    const host = h('div', { class: 'google-gsi' });
+    const problem = h('div', { class: 'alert err', style: 'display:none' });
+    if (!primary) slot.appendChild(h('div', { class: 'auth-divider', text: 'or' }));
+    slot.appendChild(host);
+    slot.appendChild(problem);
+
+    const boot = () => {
+      try {
+        window.google.accounts.id.initialize({
+          client_id: clientId,
+          ux_mode: 'popup',
+          callback: (response) => {
+            if (!response || !response.credential) return;
+            problem.style.display = 'none';
+            api('/api/auth/google/idtoken', {
+              method: 'POST',
+              body: { credential: response.credential, portal: portal },
+            }).then((data) => {
+              App.state.token = data.token;
+              App.state.user = data.user;
+              localStorage.setItem('examflow_token', data.token);
+              return start();
+            }).catch((err) => {
+              problem.textContent = err.message;
+              problem.style.display = 'flex';
+            });
+          },
+        });
+        window.google.accounts.id.renderButton(host, {
+          theme: 'outline', size: 'large', text: 'continue_with',
+          shape: 'rectangular', logo_alignment: 'left', width: 320,
+        });
+      } catch (e) {
+        problem.textContent = 'Google sign-in could not start. Use your email and password instead.';
+        problem.style.display = 'flex';
+      }
+    };
+
+    if (window.google && window.google.accounts && window.google.accounts.id) { boot(); return; }
+    const script = document.createElement('script');
+    script.src = 'https://accounts.google.com/gsi/client';
+    script.async = true;
+    script.onload = boot;
+    script.onerror = () => {
+      problem.textContent = 'Google sign-in is unreachable right now. Use your email and password.';
+      problem.style.display = 'flex';
+    };
+    document.head.appendChild(script);
+  }
+
   function loadGoogleButton(slot, portal) {
     fetch('/api/auth/providers')
       .then((response) => (response.ok ? response.json() : { google: false }))
       .then((providers) => {
         if (!providers || !providers.google) return;
         const primary = providers.password === false;
+        if (providers.google_mode === 'idtoken' && providers.google_client_id) {
+          googleIdentityButton(slot, portal, providers.google_client_id, primary);
+          return;
+        }
         if (!primary) slot.appendChild(h('div', { class: 'auth-divider', text: 'or' }));
         slot.appendChild(h('a', {
           class: 'btn block google-btn' + (primary ? '' : ' ghost'),

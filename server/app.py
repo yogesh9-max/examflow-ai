@@ -31,6 +31,13 @@ PORTAL_ROLES = {"admin": ("Super Admin", "School Admin"),
                 "student": ("Student",)}
 
 
+PORTAL_GOOGLE_ERRORS = {
+    "admin": "This is the administrator portal. Invigilators and students sign in from their own portal.",
+    "student": "This is the student portal. Staff sign in from the administrator or invigilator portal.",
+    "user": "This is the invigilator portal. Administrators and students sign in from their own portal.",
+}
+
+
 def _password_sign_in_available():
     if AUTH_MODE == "google" and google_auth.ENABLED:
         return False
@@ -113,6 +120,38 @@ class Handler(BaseHTTPRequestHandler):
         host = self.headers.get("Host") or "localhost:8000"
         return "%s://%s" % (proto, host)
 
+    def _google_account(self, conn, profile, portal):
+        """Resolve a verified Google identity to an ExamFlow account for this portal."""
+        row = conn.execute("SELECT * FROM users WHERE LOWER(email) = ?",
+                           (profile["email"],)).fetchone()
+        if row is None:
+            if portal != "student":
+                return None, ("No ExamFlow account uses that Google address. Ask the examination "
+                              "office to create one, or sign in with your email and password.")
+            conn.execute(
+                """INSERT INTO users (id, full_name, email, password_hash, role,
+                                      school_id, department_id, student_group_id,
+                                      is_active, created_at)
+                   VALUES (?,?,?,?,?,NULL,NULL,NULL,1,?)""",
+                (db.new_id(), profile["name"], profile["email"],
+                 auth.hash_password(db.new_id() + db.new_id()), "Student", db.now_iso()))
+            conn.commit()
+            row = conn.execute("SELECT * FROM users WHERE LOWER(email) = ?",
+                               (profile["email"],)).fetchone()
+
+        user = db.decode_row("users", row)
+        if not user.get("is_active", 1):
+            return None, "This account is deactivated. Contact the examination office."
+        allowed = {"admin": ("Super Admin", "School Admin"),
+                   "user": ("Invigilator",),
+                   "student": ("Student",)}.get(portal)
+        if allowed and user["role"] not in allowed:
+            db.audit(conn, user, "Blocked sign-in (wrong portal)", "user", user["id"],
+                     "Tried the %s portal as %s via Google" % (portal, user["role"]))
+            conn.commit()
+            return None, PORTAL_GOOGLE_ERRORS.get(portal, "That account belongs to a different portal.")
+        return user, None
+
     def _redirect(self, location):
         self.send_response(302)
         self.send_header("Location", location)
@@ -191,9 +230,26 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if method == "GET" and path == "/api/auth/providers":
                 return self._send(200, {"password": _password_sign_in_available(),
-                                        "google": google_auth.ENABLED,
+                                        "google": google_auth.ENABLED or google_auth.ID_MODE,
+                                        "google_mode": ("redirect" if google_auth.ENABLED
+                                                        else ("idtoken" if google_auth.ID_MODE else None)),
+                                        "google_client_id": google_auth.CLIENT_ID or None,
                                         "otp": mailer.ENABLED,
                                         "mode": AUTH_MODE})
+
+            if method == "POST" and path == "/api/auth/google/idtoken":
+                body = self._json_body()
+                portal = (body.get("portal") or "").strip().lower()
+                try:
+                    profile = google_auth.verify_id_token(body.get("credential"))
+                except google_auth.GoogleAuthError as exc:
+                    raise auth.Unauthorized(str(exc))
+                user, error = self._google_account(conn, profile, portal)
+                if error:
+                    raise auth.Unauthorized(error)
+                db.audit(conn, user, "User login (Google)", "user", user["id"], "Portal: %s" % (portal or "default"))
+                conn.commit()
+                return self._send(200, {"token": auth.make_token(user), "user": user})
 
             if method == "GET" and path == "/api/auth/google/start":
                 if not google_auth.ENABLED:

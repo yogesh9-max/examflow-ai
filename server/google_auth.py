@@ -20,9 +20,13 @@ import auth
 CLIENT_ID = (os.environ.get("GOOGLE_CLIENT_ID") or "").strip()
 CLIENT_SECRET = (os.environ.get("GOOGLE_CLIENT_SECRET") or "").strip()
 ENABLED = bool(CLIENT_ID and CLIENT_SECRET)
+# Without a client secret the app still signs people in through Google Identity
+# Services: the browser receives an ID token and the server validates it here.
+ID_MODE = bool(CLIENT_ID) and not CLIENT_SECRET
 ADMIN_EMAILS = {e.strip().lower() for e in (os.environ.get("EXAMFLOW_GOOGLE_ADMIN_EMAILS") or "").split(",") if e.strip()}
 
 AUTHORIZE_URL = "https://accounts.google.com/o/oauth2/v2/auth"
+TOKENINFO_URL = "https://oauth2.googleapis.com/tokeninfo"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 STATE_TTL = 600
 
@@ -109,6 +113,43 @@ def exchange_code(code, redirect_uri):
             "name": profile.get("name") or email.split("@")[0],
             "picture": profile.get("picture"),
             "email_verified": bool(profile.get("email_verified", True))}
+
+
+def verify_id_token(credential):
+    """Validate a Google Identity Services ID token and return the profile."""
+    if not CLIENT_ID:
+        raise GoogleAuthError("Google sign-in is not configured.")
+    token = (credential or "").strip()
+    if token.count(".") != 2:
+        raise GoogleAuthError("Google did not return a usable credential.")
+    url = TOKENINFO_URL + "?" + urllib.parse.urlencode({"id_token": token})
+    try:
+        with urllib.request.urlopen(url, timeout=20) as response:
+            claims = json.loads(response.read() or b"{}")
+    except urllib.error.HTTPError:
+        raise GoogleAuthError("Google could not confirm that sign-in. Please try again.")
+    except (urllib.error.URLError, json.JSONDecodeError):
+        raise GoogleAuthError("Could not reach Google to finish sign-in.")
+
+    if (claims.get("aud") or "") != CLIENT_ID:
+        raise GoogleAuthError("That Google credential was issued for a different application.")
+    if claims.get("iss") not in ("accounts.google.com", "https://accounts.google.com"):
+        raise GoogleAuthError("Google could not confirm that sign-in.")
+    try:
+        expired = int(claims.get("exp") or 0) < time.time()
+    except (TypeError, ValueError):
+        expired = True
+    if expired:
+        raise GoogleAuthError("That sign-in expired. Please try again.")
+    email = (claims.get("email") or "").strip().lower()
+    if not email:
+        raise GoogleAuthError("Google account has no email address.")
+    if str(claims.get("email_verified")).lower() not in ("true", "1"):
+        raise GoogleAuthError("That Google email address is not verified.")
+    return {"email": email,
+            "name": claims.get("name") or email.split("@")[0],
+            "picture": claims.get("picture"),
+            "email_verified": True}
 
 
 def role_for(email):
