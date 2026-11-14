@@ -223,6 +223,21 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(500, {"error": str(exc)[:300]})
             return self._send(200, {"status": "ok", "migrated": summary})
 
+        if path == "/api/ping":
+            import time as _t
+            t0 = _t.time()
+            conn = db.connect()
+            t1 = _t.time()
+            marks = []
+            for _ in range(5):
+                a = _t.time()
+                conn.execute("SELECT 1 AS x").fetchone()
+                marks.append(round((_t.time() - a) * 1000, 1))
+            conn.close()
+            return self._send(200, {"connect_ms": round((t1 - t0) * 1000, 1),
+                                    "query_ms": marks,
+                                    "pooled": db.pgdb_pooled() if hasattr(db, "pgdb_pooled") else None})
+
         if path == "/api/integrations":
             return self._send(200, {"status": "ok", "services": integrations.status()})
 
