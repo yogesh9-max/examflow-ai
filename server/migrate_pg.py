@@ -85,7 +85,8 @@ def migrate_from_sqlite(source_path, reset=False):
         db._ensure_user_columns()
         if reset:
             target_tables = [row["name"] for row in target.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").fetchall()]
+                "SELECT table_name AS name FROM information_schema.tables "
+                "WHERE table_schema = 'public' AND table_type = 'BASE TABLE'").fetchall()]
             if target_tables:
                 target.execute("TRUNCATE TABLE %s RESTART IDENTITY CASCADE" % ",".join(target_tables))
                 target.commit()
