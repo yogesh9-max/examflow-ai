@@ -31,7 +31,9 @@
   const NAV = [
     ['Overview', [
       { id: 'dashboard', label: 'Dashboard', icon: 'dashboard', role: ['Super Admin', 'School Admin', 'Invigilator'] },
+      { id: 'student-home', label: 'Dashboard', icon: 'dashboard', role: ['Student'] },
       { id: 'my-exams', label: 'My Exams', icon: 'file', role: ['Student'] },
+      { id: 'my-profile', label: 'My Profile', icon: 'user', role: ['Student'] },
     ]],
     ['Institution', [
       { id: 'schools', label: 'Schools', icon: 'school', role: ['Super Admin'] },
@@ -616,7 +618,7 @@
   function homeRoute() {
     const role = App.state.user && App.state.user.role;
     if (role === 'Invigilator') return 'my-duties';
-    if (role === 'Student') return 'my-exams';
+    if (role === 'Student') return 'student-home';
     return 'dashboard';
   }
 

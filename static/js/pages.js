@@ -736,6 +736,241 @@
     ],
   }));
 
+  /* ------------------------------------------------------------ student home */
+  const LPU_GUIDELINES = [
+    'Carry your LPU identity card to every session. The invigilator can refuse entry without it.',
+    'Reach the examination hall at least 30 minutes before the session starts. Late entry is at the invigilator\u2019s discretion.',
+    'Mobile phones, smart watches, earphones and any other electronic device are not allowed inside the hall.',
+    'Only pens, pencils and a transparent geometry box are permitted. Borrowing anything from another candidate is treated as unfair means.',
+    'Sit only on the seat allotted to you, as shown on the portal and on the hall notice board.',
+    'Any unfair means (UMC) is reported by the invigilator and heard by the university unfair means committee. Both sides sign the report.',
+    'Check attendance on the answer sheet before you start, and hand over the sheet to the invigilator before you leave.',
+    'Results, re-evaluation and backlog registration run through the LPU UMS portal.',
+  ];
+
+  function dayLabel(dateStr) {
+    if (!dateStr) return '-';
+    const d = new Date(dateStr + 'T00:00:00');
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const diff = Math.round((d - today) / 86400000);
+    if (diff === 0) return 'Today';
+    if (diff === 1) return 'Tomorrow';
+    if (diff > 1) return `In ${diff} days`;
+    return '';
+  }
+
+  function examCsv(data) {
+    downloadFile(`examflow-${(data.student && data.student.roll_number) || 'timetable'}.csv`,
+      toCsv([
+        { key: 'examination_date', label: 'Date' },
+        { key: 'start_time', label: 'Start' },
+        { key: 'end_time', label: 'End' },
+        { key: 'subject_code', label: 'Code' },
+        { key: 'subject_name', label: 'Paper' },
+        { key: 'room', label: 'Room' },
+        { key: 'building', label: 'Building' },
+        { key: 'duration_minutes', label: 'Duration (min)' },
+      ], data.exams || []));
+    toast('Timetable downloaded', 'ok');
+  }
+
+  function studentSetupPrompt(view, message) {
+    view.appendChild(h('div', { class: 'mt16' }, card('Set up your student profile',
+      h('div', null,
+        h('div', { class: 'alert warn', text: message }),
+        h('div', { class: 'muted small mb8', text: 'Pick your course, semester and roll number once. After that the portal shows only your papers.' }),
+        h('button', { class: 'btn', onclick: () => navigate('my-profile') }, icon('user', 15), 'Open my profile')))));
+  }
+
+  route({
+    id: 'student-home',
+    title: 'Student dashboard',
+    render: async (view) => {
+      view.appendChild(pageHead('Student dashboard', 'Your course, your papers and everything you need on exam day.'));
+      view.appendChild(loadingBlock('Loading your dashboard'));
+      let data;
+      try { data = await api('/api/my-exams'); } catch (err) {
+        view.innerHTML = '';
+        view.appendChild(h('div', { class: 'alert err', text: err.message }));
+        return;
+      }
+      view.innerHTML = '';
+      const student = data.student || {};
+      const course = data.course || {};
+      const name = (student.name || 'Student').split(' ')[0];
+
+      view.appendChild(pageHead(`Welcome, ${name}`,
+        'Your course, your papers and everything you need on exam day.',
+        data.enrolled ? [
+          h('button', { class: 'btn secondary', onclick: () => examCsv(data) }, icon('download', 15), 'Download timetable'),
+          h('button', { class: 'btn', onclick: () => navigate('my-exams') }, icon('file', 15), 'My exams'),
+        ] : [h('button', { class: 'btn', onclick: () => navigate('my-profile') }, icon('user', 15), 'Set up my profile')]));
+
+      if (!data.enrolled) {
+        view.appendChild(h('div', { class: 'grid kpi' },
+          kpi('Student', student.name || '-', student.email || ''),
+          kpi('Course', 'Not set', 'Pick your programme and semester')));
+        studentSetupPrompt(view, 'Your account is not linked to a course yet, so there is nothing to show.');
+        return;
+      }
+
+      const exams = data.exams || [];
+      const scheduled = exams.filter((e) => e.scheduled);
+      const next = scheduled.find((e) => !e.examination_date || e.examination_date >= new Date().toISOString().slice(0, 10)) || scheduled[0];
+      const published = data.run && ['Published', 'Approved'].includes(data.run.status);
+      const office = data.exam_office || {};
+
+      view.appendChild(h('div', { class: 'grid kpi' },
+        kpi('Course', course.department || course.programme || '-', course.school || '-'),
+        kpi('Programme', course.programme || '-', `${course.semester_label || '-'} · ${course.academic_year || '-'}`),
+        kpi('Roll number', student.roll_number || 'Not set', course.section ? `Section ${course.section}` : 'Section -'),
+        kpi('My papers', exams.length, `${scheduled.length} scheduled`),
+        kpi('Timetable', published ? 'Published' : 'Draft', data.run ? data.run.run_name : 'Not generated yet')));
+
+      if (next) {
+        view.appendChild(h('div', { class: 'mt16' }, card('Next examination',
+          h('div', { class: 'grid two' },
+            h('div', null,
+              h('div', { class: 'big-code', text: next.subject_code }),
+              h('h3', { class: 'mt4', text: next.subject_name }),
+              h('div', { class: 'muted small mt4', text: `${fmtDate(next.examination_date)} · ${next.start_time}-${next.end_time} · ${next.duration_minutes} min` })),
+            h('div', null,
+              h('div', { class: 'kpi-card' },
+                h('div', { class: 'label', text: 'When' }),
+                h('div', { class: 'value', text: dayLabel(next.examination_date) || fmtDate(next.examination_date) }),
+                h('div', { class: 'foot', text: 'Reach 30 minutes early with your ID card' })),
+              h('div', { class: 'muted small mt8', text: next.room ? `Room ${next.room}${next.building ? ' · ' + next.building : ''}` : 'Room will be shown once the timetable is published' }))),
+          'From your published timetable')));
+      }
+
+      view.appendChild(h('div', { class: 'mt16' }, card(
+        `My papers · ${course.programme || 'batch'}${course.semester_label && course.semester_label !== '-' ? ' · ' + course.semester_label : ''}`,
+        dataTable({
+          columns: [
+            { key: 'examination_date', label: 'Date', render: (r) => (r.examination_date ? fmtDate(r.examination_date) : 'Not published') },
+            { key: 'session', label: 'Session', render: (r) => (r.start_time ? `${r.start_time}-${r.end_time}` : '-') },
+            { key: 'subject_code', label: 'Code', render: (r) => h('b', { text: r.subject_code }) },
+            { key: 'subject_name', label: 'Paper' },
+            { key: 'room', label: 'Room', render: (r) => (r.room ? `${r.room}${r.building ? ' · ' + r.building : ''}` : 'Assigning') },
+          ],
+          rows: exams,
+          empty: 'No papers have been scheduled for your batch yet.',
+        }),
+        'Only your batch is listed')));
+
+      view.appendChild(h('div', { class: 'grid two mt16' },
+        card('Examination day: what to carry and follow',
+          h('ul', { class: 'plain-list' }, LPU_GUIDELINES.map((line) => h('li', { text: line })))),
+        h('div', null,
+          card('Examination office',
+            h('div', null,
+              h('div', { class: 'muted small', text: 'Your school\u2019s examination cell is the first place to ask about dates, rooms or corrections.' }),
+              h('div', { class: 'mt8' }, h('b', { text: office.school || course.school || '-' })),
+              h('div', { class: 'muted small', text: office.code ? `School code ${office.code}` : '' }),
+              office.email ? h('div', { class: 'muted small mt4', text: `Email: ${office.email}` }) : null,
+              office.phone ? h('div', { class: 'muted small', text: `Phone: ${office.phone}` }) : null,
+              office.address ? h('div', { class: 'muted small mt4', text: office.address }) : null,
+              h('div', { class: 'muted small mt4', text: 'Lovely Professional University, Phagwara, Punjab 144411' }))),
+          h('div', { class: 'card mt16' },
+            h('div', { class: 'card-head' }, h('h3', { text: 'Wrong batch or missing roll number?' })),
+            h('div', { class: 'muted small', text: 'Open My Profile to change your course and semester or correct your roll number. Papers update immediately.' }),
+            h('div', { class: 'mt8' }, h('button', { class: 'btn secondary', onclick: () => navigate('my-profile') }, 'Open my profile'))))));
+
+      if (!published) {
+        view.appendChild(h('div', { class: 'alert warn mt16', text: 'The examination office has not published this timetable yet. Dates can still change.' }));
+      }
+    },
+  });
+
+  /* -------------------------------------------------------------- my profile */
+  route({
+    id: 'my-profile',
+    title: 'My profile',
+    render: async (view) => {
+      view.appendChild(pageHead('My profile', 'Your course, batch and contact details.'));
+      view.appendChild(loadingBlock('Loading your profile'));
+      let data, options;
+      try {
+        data = await api('/api/my-exams');
+        options = await api('/api/student/enrolment-options');
+      } catch (err) {
+        view.innerHTML = '';
+        view.appendChild(h('div', { class: 'alert err', text: err.message }));
+        return;
+      }
+      view.innerHTML = '';
+      const student = data.student || {};
+      const course = data.course || {};
+      const current = (options.current || {});
+
+      view.appendChild(pageHead('My profile', 'Your course, batch and contact details.'));
+
+      view.appendChild(h('div', { class: 'grid kpi' },
+        kpi('Name', student.name || '-', student.email || ''),
+        kpi('Programme', course.programme || current.group_name || 'Not set',
+          current.semester ? `Semester ${current.semester}` : 'Choose below'),
+        kpi('Academic year', course.academic_year || current.academic_year || '-',
+          current.academic_year ? `${current.student_count || 0} students in this batch` : ''),
+        kpi('Roll number', student.roll_number || 'Not set', student.phone ? `Mobile ${student.phone}` : 'Add a mobile number')));
+
+      const groupSelect = select((options.groups || []).map((g) => ({
+        value: g.id,
+        label: `${g.school_name || 'School'} - ${g.label}`,
+      })), { value: current.id || '' });
+      const rollInput = inputEl({ placeholder: 'e.g. 10 or 12512013', value: student.roll_number || '' });
+      const phoneInput = inputEl({ placeholder: '10-digit mobile, e.g. 98765 43210', value: student.phone || '' });
+      const saveBtn = h('button', { class: 'btn' }, icon('check', 15), 'Save my details');
+      saveBtn.addEventListener('click', async () => {
+        saveBtn.disabled = true;
+        try {
+          if (groupSelect.value && groupSelect.value !== current.id) {
+            await api('/api/student/enrol', { method: 'POST', body: { student_group_id: groupSelect.value, roll_number: rollInput.value.trim() } });
+          }
+          await api('/api/student/profile', { method: 'POST', body: { roll_number: rollInput.value.trim(), phone: phoneInput.value.trim() } });
+          toast('Profile saved', 'ok');
+          App.state.meta = await api('/api/meta');
+          navigate('student-home');
+        } catch (err) {
+          saveBtn.disabled = false;
+          toast(err.message, 'err');
+        }
+      });
+
+      view.appendChild(h('div', { class: 'mt16' }, card('Course and batch',
+        h('div', null,
+          h('div', { class: 'alert info', text: 'Your papers come from this batch. If your course, semester or section is wrong, change it here or ask your school examination cell.' }),
+          field('Programme, year and semester', groupSelect, 'Listed as school - programme - semester (academic year).'),
+          h('div', { class: 'grid two' },
+            field('Roll number', rollInput, 'As printed on your ID card.'),
+            field('Mobile number', phoneInput, 'Used for signing in and for examination office updates.')),
+          h('div', { class: 'mt16' }, saveBtn)))));
+
+      view.appendChild(h('div', { class: 'mt16' }, card('Read-only account details',
+        dataTable({
+          columns: [{ key: 'field', label: 'Field' }, { key: 'value', label: 'Value' }],
+          rows: [
+            { field: 'Name', value: student.name || '-' },
+            { field: 'Email', value: student.email || '-' },
+            { field: 'Role', value: 'Student' },
+            { field: 'School', value: course.school || '-' },
+            { field: 'Department', value: course.department || '-' },
+            { field: 'Programme', value: course.programme || '-' },
+            { field: 'Semester', value: course.semester_label || '-' },
+            { field: 'Academic year', value: course.academic_year || '-' },
+            { field: 'Section', value: course.section || student.section || '-' },
+          ],
+        }))));
+
+      view.appendChild(h('div', { class: 'mt16' }, card('What the examination office needs from you',
+        h('ul', { class: 'plain-list' }, [
+          'Keep your roll number and mobile number correct here; the examination office uses them to reach you.',
+          'Check this page after every timetable publication, the date and room can change until it is published.',
+          'If your batch is not listed, ask your school examination cell to create it before you report.',
+        ]))));
+    },
+  });
+
   /* ---------------------------------------------------------------- my duties */
   route({
     id: 'my-duties',

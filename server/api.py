@@ -854,6 +854,41 @@ def enrol_student(conn, user, body):
     return my_exams(conn, dict(user, student_group_id=group["id"], roll_number=roll or user.get("roll_number")))
 
 
+def save_student_profile(conn, user, body):
+    """Students keep their own contact details current; the batch stays authoritative."""
+    if user["role"] != "Student":
+        raise auth.ValidationError("Only a student account has a student profile.")
+    body = dict(body or {})
+    updates, values = [], []
+    if "roll_number" in body:
+        roll = (body.get("roll_number") or "").strip()[:24]
+        updates.append("roll_number = ?")
+        values.append(roll or None)
+    if "phone" in body and (body.get("phone") or "").strip():
+        mobile = auth.normalise_mobile(body.get("phone") or "")
+        if not mobile:
+            raise auth.ValidationError(
+                "Enter a 10-digit Indian mobile number, for example 98765 43210.")
+        taken = conn.execute("SELECT id FROM users WHERE phone = ? AND id <> ?",
+                             (mobile, user["id"])).fetchone()
+        if taken:
+            raise auth.ValidationError("That mobile number is already linked to another account.")
+        updates.append("phone = ?")
+        values.append(mobile)
+    if not updates:
+        return my_exams(conn, user)
+    values.append(user["id"])
+    conn.execute("UPDATE users SET %s WHERE id = ?" % ", ".join(updates), values)
+    conn.commit()
+    db.audit(conn, user, "Updated student profile", "users", user["id"])
+    conn.commit()
+    fresh = dict(user)
+    row = conn.execute("SELECT * FROM users WHERE id = ?", (user["id"],)).fetchone()
+    if row:
+        fresh = db.decode_row("users", row)
+    return my_exams(conn, fresh)
+
+
 def my_exams(conn, user):
     """A student's own examination schedule: only the groups they belong to."""
     group_id = user.get("student_group_id")
@@ -921,9 +956,17 @@ def my_exams(conn, user):
     out.sort(key=lambda e: (e["examination_date"] or "9999", e["start_time"] or "", e["subject_code"]))
     batch_year = group.get("academic_year") or "-"
     semester = group.get("semester")
+    office = {}
+    if school:
+        office = {"school": school.get("school_name"), "code": school.get("school_code"),
+                  "email": school.get("contact_email"), "phone": school.get("contact_number"),
+                  "address": school.get("address")}
     return {
         "student": {"name": user["full_name"], "email": user["email"],
-                    "roll_number": user.get("roll_number")},
+                    "roll_number": user.get("roll_number"),
+                    "phone": user.get("phone"),
+                    "section": (group.get("section") or None)},
+        "exam_office": office,
         "group": group,
         "school": school,
         "course": {
