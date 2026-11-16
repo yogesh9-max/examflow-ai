@@ -824,9 +824,34 @@ def enrolment_options(conn, user):
     current = None
     if user.get("student_group_id"):
         current = next((g for g in groups if g["id"] == user["student_group_id"]), None)
+    directory = []
+    for row in conn.execute("""SELECT id, school_name, school_code, address, contact_email,
+                                      contact_number, status FROM schools ORDER BY school_name""").fetchall():
+        row = dict(row)
+        counts = conn.execute(
+            "SELECT COUNT(*) AS groups_count FROM student_groups WHERE school_id = ?",
+            (row["id"],)).fetchone()
+        directory.append({
+            "id": row["id"],
+            "name": row["school_name"],
+            "code": row.get("school_code"),
+            "address": row.get("address"),
+            "email": row.get("contact_email"),
+            "phone": row.get("contact_number"),
+            "status": row.get("status"),
+            "batch_count": counts["groups_count"] if counts else 0,
+        })
+    departments = []
+    for row in conn.execute("""SELECT d.id, d.department_name, d.department_code, d.school_id
+                               FROM departments d ORDER BY d.department_name""").fetchall():
+        row = dict(row)
+        departments.append({"id": row["id"], "name": row["department_name"],
+                            "code": row.get("department_code"), "school_id": row["school_id"]})
     return {"groups": groups, "current": current,
             "roll_number": user.get("roll_number"),
             "schools": sorted({(g["school_id"], g["school_name"] or "-") for g in groups}),
+            "school_directory": directory,
+            "departments_detail": departments,
             "departments": sorted({(g["department_id"], g["department_name"] or "-")
                                    for g in groups if g["department_id"]})}
 
@@ -973,6 +998,8 @@ def my_exams(conn, user):
             "school": (school or {}).get("school_name"),
             "department": (dept or {}).get("department_name"),
             "programme": group.get("group_name"),
+            "programme_code": group.get("group_code") if "group_code" in group else None,
+            "school_code": (school or {}).get("school_code"),
             "semester": semester,
             "semester_label": ("Semester %s" % semester) if semester else "-",
             "academic_year": batch_year,

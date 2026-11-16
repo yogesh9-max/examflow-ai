@@ -888,7 +888,7 @@
     id: 'my-profile',
     title: 'My profile',
     render: async (view) => {
-      view.appendChild(pageHead('My profile', 'Your course, batch and contact details.'));
+      view.appendChild(pageHead('My profile', 'Your school, programme and contact details.'));
       view.appendChild(loadingBlock('Loading your profile'));
       let data, options;
       try {
@@ -902,22 +902,64 @@
       view.innerHTML = '';
       const student = data.student || {};
       const course = data.course || {};
-      const current = (options.current || {});
+      const groups = options.groups || [];
+      const directory = (options.school_directory || []).filter((s) => (s.status || 'Active') === 'Active' || (options.current && options.current.school_id === s.id));
+      const current = options.current || {};
+      const currentSchoolId = current.school_id || (groups.find((g) => g.id === current.id) || {}).school_id || '';
 
-      view.appendChild(pageHead('My profile', 'Your course, batch and contact details.'));
+      view.appendChild(pageHead('My profile', 'Your school, programme and contact details.'));
 
       view.appendChild(h('div', { class: 'grid kpi' },
-        kpi('Name', student.name || '-', student.email || ''),
+        kpi('School', course.school || '-', course.school_code ? `Code ${course.school_code}` : 'Not set'),
         kpi('Programme', course.programme || current.group_name || 'Not set',
           current.semester ? `Semester ${current.semester}` : 'Choose below'),
         kpi('Academic year', course.academic_year || current.academic_year || '-',
           current.academic_year ? `${current.student_count || 0} students in this batch` : ''),
         kpi('Roll number', student.roll_number || 'Not set', student.phone ? `Mobile ${student.phone}` : 'Add a mobile number')));
 
-      const groupSelect = select((options.groups || []).map((g) => ({
-        value: g.id,
-        label: `${g.school_name || 'School'} - ${g.label}`,
-      })), { value: current.id || '' });
+      /* step 1: school. step 2: programme and semester inside that school. */
+      const schoolSelect = select(directory.map((s) => ({
+        value: s.id,
+        label: `${s.name}${s.code ? ' (' + s.code + ')' : ''}${s.batch_count ? ' - ' + s.batch_count + ' batches' : ' - no batches yet'}`,
+      })), { value: currentSchoolId });
+
+      const groupSelect = select([], {});
+      function fillGroups() {
+        const forSchool = groups.filter((g) => g.school_id === schoolSelect.value);
+        groupSelect.innerHTML = '';
+        if (!forSchool.length) {
+          groupSelect.appendChild(h('option', { value: '', text: 'This school has no batches yet, ask the examination cell' }));
+          return;
+        }
+        forSchool.forEach((g) => {
+          groupSelect.appendChild(h('option', {
+            value: g.id,
+            text: `${g.label}${g.department_name ? ' · ' + g.department_name : ''}${g.id === current.id ? ' (current)' : ''}`,
+          }));
+        });
+        const keep = forSchool.some((g) => g.id === current.id) ? current.id : forSchool[0].id;
+        groupSelect.value = keep;
+      }
+      fillGroups();
+      schoolSelect.addEventListener('change', fillGroups);
+
+      const schoolCard = h('div', { class: 'card mt16' });
+      function paintSchoolCard() {
+        const school = directory.find((s) => s.id === schoolSelect.value) || {};
+        schoolCard.innerHTML = '';
+        schoolCard.appendChild(h('div', { class: 'card-head' },
+          h('h3', { text: school.name || 'Your school' }),
+          h('span', { class: 'muted small', text: school.code ? `Code ${school.code}` : '' })));
+        schoolCard.appendChild(h('div', null,
+          h('div', { class: 'muted small', text: 'Examination cell for this school. Dates, rooms and corrections come from here first.' }),
+          school.email ? h('div', { class: 'muted small mt8', text: `Email: ${school.email}` }) : null,
+          school.phone ? h('div', { class: 'muted small', text: `Phone: ${school.phone}` }) : null,
+          school.address ? h('div', { class: 'muted small', text: `Address: ${school.address}` }) : null,
+          h('div', { class: 'muted small mt8', text: `${school.batch_count || 0} batches registered under this school` })));
+      }
+      paintSchoolCard();
+      schoolSelect.addEventListener('change', paintSchoolCard);
+
       const rollInput = inputEl({ placeholder: 'e.g. 10 or 12512013', value: student.roll_number || '' });
       const phoneInput = inputEl({ placeholder: '10-digit mobile, e.g. 98765 43210', value: student.phone || '' });
       const saveBtn = h('button', { class: 'btn' }, icon('check', 15), 'Save my details');
@@ -937,14 +979,24 @@
         }
       });
 
-      view.appendChild(h('div', { class: 'mt16' }, card('Course and batch',
+      view.appendChild(h('div', { class: 'grid two mt16' },
+        card('Which school and programme?',
+          h('div', null,
+            h('div', { class: 'alert info', text: 'Pick your LPU school first, then the programme and semester inside it. Your papers, examination cell and guidelines follow that choice.' }),
+            field('School', schoolSelect, 'Every school on the portal is listed, including the ones with no batches yet.'),
+            field('Programme, semester and section', groupSelect, 'Batches are shown exactly as your examination cell created them.'),
+            h('div', { class: 'grid two' },
+              field('Roll number', rollInput, 'As printed on your ID card.'),
+              field('Mobile number', phoneInput, 'Used for signing in and for examination office updates.')),
+            h('div', { class: 'mt16' }, saveBtn))),
         h('div', null,
-          h('div', { class: 'alert info', text: 'Your papers come from this batch. If your course, semester or section is wrong, change it here or ask your school examination cell.' }),
-          field('Programme, year and semester', groupSelect, 'Listed as school - programme - semester (academic year).'),
-          h('div', { class: 'grid two' },
-            field('Roll number', rollInput, 'As printed on your ID card.'),
-            field('Mobile number', phoneInput, 'Used for signing in and for examination office updates.')),
-          h('div', { class: 'mt16' }, saveBtn)))));
+          schoolCard,
+          h('div', { class: 'card mt16' },
+            h('div', { class: 'card-head' }, h('h3', { text: 'Your examination days' })),
+            h('div', { class: 'muted small', text: data.enrolled
+              ? `${(data.exams || []).length} papers in this batch, ${(data.exams || []).filter((e) => e.scheduled).length} with a published date and room.`
+              : 'Link your school and programme to see your papers.' }),
+            h('div', { class: 'mt8' }, h('button', { class: 'btn secondary', onclick: () => navigate('my-exams') }, icon('file', 15), 'Open my exams'))))));
 
       view.appendChild(h('div', { class: 'mt16' }, card('Read-only account details',
         dataTable({
@@ -954,6 +1006,7 @@
             { field: 'Email', value: student.email || '-' },
             { field: 'Role', value: 'Student' },
             { field: 'School', value: course.school || '-' },
+            { field: 'School code', value: course.school_code || '-' },
             { field: 'Department', value: course.department || '-' },
             { field: 'Programme', value: course.programme || '-' },
             { field: 'Semester', value: course.semester_label || '-' },
@@ -964,9 +1017,9 @@
 
       view.appendChild(h('div', { class: 'mt16' }, card('What the examination office needs from you',
         h('ul', { class: 'plain-list' }, [
-          'Keep your roll number and mobile number correct here; the examination office uses them to reach you.',
+          'Keep your school, programme, roll number and mobile number correct here; the examination office uses them to reach you.',
           'Check this page after every timetable publication, the date and room can change until it is published.',
-          'If your batch is not listed, ask your school examination cell to create it before you report.',
+          'If your programme is not listed under your school, ask that school\u2019s examination cell to create the batch before you report.',
         ]))));
     },
   });
