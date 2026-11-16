@@ -259,6 +259,15 @@ CREATE TABLE IF NOT EXISTS notifications (
 
 CREATE INDEX IF NOT EXISTS idx_exam_school ON examinations(school_id);
 CREATE INDEX IF NOT EXISTS idx_assign_run ON schedule_assignments(scheduling_run_id);
+
+CREATE TABLE IF NOT EXISTS examination_groups (
+    examination_id TEXT NOT NULL,
+    group_id TEXT NOT NULL,
+    PRIMARY KEY (examination_id, group_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_examgroup_group ON examination_groups(group_id, examination_id);
+CREATE INDEX IF NOT EXISTS idx_assign_run_exam ON schedule_assignments(scheduling_run_id, examination_id);
 """
 
 JSON_FIELDS = {
@@ -317,6 +326,13 @@ def _ensure_user_columns() -> None:
         if "roll_number" not in columns:
             conn.execute("ALTER TABLE users ADD COLUMN roll_number TEXT")
             conn.commit()
+        # student pages look up by batch; the column arrives by migration, so the
+        # index is created here rather than in SCHEMA
+        try:
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_users_group ON users(student_group_id)")
+            conn.commit()
+        except Exception:
+            pass
         # one mobile number per account; partial index keeps NULLs out of the way
         try:
             conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS users_phone_key "
@@ -375,11 +391,86 @@ def init_db(seed: bool = True) -> None:
         from seed import seed_database
         seed_database()
     _ensure_user_columns()
+    ensure_group_index()
     changed = link_invigilator_accounts()
     changed += ensure_student_accounts()
     if changed and not pgdb.enabled():
         import persistence
         persistence.save_now()
+
+
+def group_tokens(record) -> list:
+    """The batch ids of one examination record, tolerant of JSON text or a list."""
+    raw = record.get("student_group_ids") if isinstance(record, dict) else record
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw or "[]")
+        except ValueError:
+            raw = []
+    return [value for value in (raw or []) if value]
+
+
+GROUP_INDEX_DDL = """
+CREATE TABLE IF NOT EXISTS examination_groups (
+    examination_id TEXT NOT NULL,
+    group_id TEXT NOT NULL,
+    PRIMARY KEY (examination_id, group_id)
+);
+CREATE INDEX IF NOT EXISTS idx_examgroup_group ON examination_groups(group_id, examination_id);
+CREATE INDEX IF NOT EXISTS idx_assign_run_exam ON schedule_assignments(scheduling_run_id, examination_id);
+"""
+
+
+def ensure_group_index() -> None:
+    """Create the paper -> batch index on databases that predate it, then fill it.
+
+    Runs on every boot: the DDL is IF NOT EXISTS and the fill only happens when the
+    index is empty, so an existing deployment upgrades itself on the next request.
+    """
+    conn = connect()
+    try:
+        for statement in [s.strip() for s in GROUP_INDEX_DDL.split(";") if s.strip()]:
+            try:
+                conn.execute(statement)
+                conn.commit()
+            except Exception:
+                conn.rollback()
+        try:
+            filled = conn.execute("SELECT COUNT(*) AS c FROM examination_groups").fetchone()["c"]
+        except Exception:
+            return
+        papers = conn.execute("SELECT COUNT(*) AS c FROM examinations").fetchone()["c"]
+        if filled == 0 and papers:
+            sync_examination_groups()
+    finally:
+        conn.close()
+
+
+def sync_examination_groups(exam_id=None) -> int:
+    """Rewrite the (paper, batch) index for one examination, or for all of them.
+
+    Called after every examination write and once at boot, which is cheap: it only
+    touches the rows for the paper that changed.
+    """
+    conn = connect()
+    written = 0
+    try:
+        if exam_id:
+            rows = conn.execute("SELECT id, student_group_ids FROM examinations WHERE id = ?",
+                                (exam_id,)).fetchall()
+        else:
+            rows = conn.execute("SELECT id, student_group_ids FROM examinations").fetchall()
+        for row in rows:
+            row = dict(row)
+            conn.execute("DELETE FROM examination_groups WHERE examination_id = ?", (row["id"],))
+            for gid in group_tokens(row):
+                conn.execute("INSERT INTO examination_groups (examination_id, group_id) VALUES (?, ?)",
+                             (row["id"], gid))
+                written += 1
+        conn.commit()
+        return written
+    finally:
+        conn.close()
 
 
 def link_invigilator_accounts() -> int:

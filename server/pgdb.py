@@ -82,6 +82,15 @@ def translate(sql, params=None):
     return text
 
 
+def _sql_only(chunk):
+    """Drop full-line SQL comments so a comment between statements is not executed.
+
+    Postgres refuses an empty query, and a comment-only chunk would be sent as one.
+    """
+    return "\n".join(line for line in chunk.splitlines()
+                     if not line.strip().startswith("--")).strip()
+
+
 def split_statements(script):
     statements, buffer = [], []
     in_string = False
@@ -89,13 +98,13 @@ def split_statements(script):
         if char == "'":
             in_string = not in_string
         if char == ";" and not in_string:
-            chunk = "".join(buffer).strip()
+            chunk = _sql_only("".join(buffer))
             if chunk:
                 statements.append(chunk)
             buffer = []
             continue
         buffer.append(char)
-    tail = "".join(buffer).strip()
+    tail = _sql_only("".join(buffer))
     if tail:
         statements.append(tail)
     return statements
