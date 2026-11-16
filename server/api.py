@@ -118,11 +118,12 @@ def list_resource(conn, user, resource, params):
         where.append("school_id = ?")
         args.append(params["school_id"])
 
+    table_cols = _columns(conn, table)
     for key in ("role", "status", "severity", "resolution_status", "priority", "session",
                 "academic_year", "semester", "is_active", "department_id", "examination_id",
                 "scheduling_run_id", "invigilator_id", "solver_status", "constraint_type",
-                "assignment_status", "is_read", "date"):
-        if params.get(key) not in (None, ""):
+                "assignment_status", "is_read", "date", "student_group_id"):
+        if params.get(key) not in (None, "") and key in table_cols:
             where.append(f"{key} = ?")
             args.append(params[key])
 
@@ -378,6 +379,112 @@ def _minutes(value):
         return h * 60 + m
     except (ValueError, AttributeError):
         return 0
+
+
+# ------------------------------------------------- bulk student enrolment
+def bulk_students(conn, user, body):
+    """Create student accounts semester-wise and bind them to the matching batch."""
+    if not auth.can_write(user, "users"):
+        raise auth.Forbidden("Your role cannot create student accounts")
+    body = body or {}
+
+    school_id = (body.get("school_id") or "").strip() or user.get("school_id")
+    if not school_id:
+        raise auth.ValidationError("Select a school.")
+    if user["role"] != "Super Admin" and school_id != user.get("school_id"):
+        raise auth.Forbidden("You can only add students to your own school.")
+    if not conn.execute("SELECT id FROM schools WHERE id=?", (school_id,)).fetchone():
+        raise auth.ValidationError("That school no longer exists.")
+
+    dept_id = (body.get("department_id") or "").strip() or None
+    dept_name = "General"
+    if dept_id:
+        dept = conn.execute("SELECT * FROM departments WHERE id=?", (dept_id,)).fetchone()
+        if not dept or dept["school_id"] != school_id:
+            raise auth.ValidationError("Pick a programme that belongs to the selected school.")
+        dept_name = dept["department_name"]
+
+    try:
+        semester = int(body.get("semester") or 0)
+    except (TypeError, ValueError):
+        semester = 0
+    if semester < 1 or semester > 12:
+        raise auth.ValidationError("Semester must be between 1 and 12.")
+
+    section = (body.get("section") or "A").strip().upper()[:2] or "A"
+    academic_year = (body.get("academic_year") or "2026-27").strip()
+    group_name = (body.get("group_name") or f"{dept_name} Sem {semester}").strip()
+
+    students = body.get("students") or []
+    if not isinstance(students, list) or not students:
+        raise auth.ValidationError("Add at least one student.")
+
+    group = conn.execute(
+        """SELECT * FROM student_groups
+           WHERE school_id=? AND COALESCE(department_id,'')=? AND semester=?
+             AND COALESCE(section,'')=? AND COALESCE(academic_year,'')=?""",
+        (school_id, dept_id or "", semester, section, academic_year)).fetchone()
+    batch_created = False
+    if group is None:
+        gid = db.new_id()
+        conn.execute(
+            """INSERT INTO student_groups (id, school_id, department_id, group_name, semester,
+               section, student_count, academic_year, created_at) VALUES (?,?,?,?,?,?,?,?,?)""",
+            (gid, school_id, dept_id, group_name, semester, section,
+             max(1, len(students)), academic_year, db.now_iso()))
+        batch_created = True
+    else:
+        gid = group["id"]
+
+    default_password = body.get("password") or "Examflow@123"
+    created, skipped = [], []
+    for row in students:
+        row = row or {}
+        name = str(row.get("full_name") or "").strip()
+        email = str(row.get("email") or "").strip().lower()
+        phone = "".join(ch for ch in str(row.get("phone") or "") if ch.isdigit())
+        roll = str(row.get("roll_number") or "").strip()
+        if not name or "@" not in email:
+            skipped.append({"email": email or name or "(blank row)",
+                            "reason": "Name and email are both required."})
+            continue
+        if phone and len(phone) != 10:
+            skipped.append({"email": email, "reason": "Mobile number must be 10 digits."})
+            continue
+        if conn.execute("SELECT id FROM users WHERE LOWER(email)=?", (email,)).fetchone():
+            skipped.append({"email": email, "reason": "That email is already registered."})
+            continue
+        if phone and conn.execute("SELECT id FROM users WHERE phone=?", (phone,)).fetchone():
+            skipped.append({"email": email,
+                            "reason": f"Mobile {phone} is already linked to another account."})
+            continue
+        uid = db.new_id()
+        conn.execute(
+            """INSERT INTO users (id, full_name, email, phone, password_hash, role, school_id,
+               department_id, student_group_id, roll_number, is_active, created_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,1,?)""",
+            (uid, name, email, phone or None, auth.hash_password(default_password), "Student",
+             school_id, dept_id, gid, roll or None, db.now_iso()))
+        created.append({"id": uid, "full_name": name, "email": email,
+                        "phone": phone or None, "roll_number": roll or None})
+
+    active = conn.execute(
+        "SELECT COUNT(*) c FROM users WHERE student_group_id=? AND is_active=1", (gid,)).fetchone()["c"]
+    conn.execute("UPDATE student_groups SET student_count=? WHERE id=?",
+                 (max(int(active or 0), len(created)), gid))
+    db.audit(conn, user, "Added students in bulk", "student_groups", gid,
+             f"{len(created)} created, {len(skipped)} skipped · {group_name} Sem {semester} · "
+             f"Section {section} · {academic_year}")
+    conn.commit()
+
+    grp = conn.execute("SELECT * FROM student_groups WHERE id=?", (gid,)).fetchone()
+    return {
+        "batch": {"id": gid, "group_name": grp["group_name"], "semester": grp["semester"],
+                  "section": grp["section"], "academic_year": grp["academic_year"],
+                  "student_count": grp["student_count"], "created": batch_created},
+        "created": created,
+        "skipped": skipped,
+    }
 
 
 # ----------------------------------------------------------------- CSV import

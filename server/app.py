@@ -518,6 +518,9 @@ class Handler(BaseHTTPRequestHandler):
             if method == "POST" and path == "/api/student/profile":
                 return self._send(200, api.save_student_profile(conn, user, self._json_body()))
 
+            if method == "POST" and path == "/api/users/bulk-students":
+                return self._send(201, api.bulk_students(conn, user, self._json_body()))
+
             if method == "POST" and path == "/api/student/enrol":
                 return self._send(200, api.enrol_student(conn, user, self._json_body()))
             if method == "POST" and path == "/api/my-duties/report-issue":

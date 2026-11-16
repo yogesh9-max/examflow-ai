@@ -15,6 +15,14 @@
     value: g.id,
     label: `${g.name}${g.semester ? ` - semester ${g.semester}` : ''}${g.academic_year ? ` (${g.academic_year})` : ''}`,
   }));
+  const optBatchesFor = (schoolId, deptId) => meta().groups
+    .filter((g) => (!schoolId || g.school_id === schoolId) && (!deptId || g.department_id === deptId))
+    .sort((a, b) => (a.semester || 0) - (b.semester || 0) || String(a.name).localeCompare(String(b.name)))
+    .map((g) => ({
+      value: g.id,
+      label: `${g.name}${g.section ? ` · Section ${g.section}` : ''}${g.academic_year ? ` · ${g.academic_year}` : ''} (${g.student_count} students)`,
+    }));
+  const groupOf = (id) => meta().groups.find((g) => g.id === id) || null;
   const optGroups = (schoolId) => meta().groups
     .filter((g) => !schoolId || g.school_id === schoolId)
     .map((g) => ({ value: g.id, label: `${g.name}${g.section ? ` · ${g.section}` : ''} (${g.student_count})` }));
@@ -54,6 +62,11 @@
           actions.appendChild(h('button', {
             class: 'btn', onclick: () => openForm(null),
           }, icon('check', 15), cfg.addLabel || 'Add record'));
+        }
+        for (const extra of cfg.extraActions ? cfg.extraActions() : []) {
+          actions.appendChild(h('button', {
+            class: 'btn secondary', onclick: () => extra.run({ load, reloadMeta }),
+          }, icon('check', 15), extra.label));
         }
         if (cfg.importable) {
           actions.appendChild(h('button', { class: 'btn secondary', onclick: openImport }, icon('download', 15), 'Import CSV'));
@@ -184,6 +197,17 @@
   }
 
   const actionsCol = (cfg) => ({ key: 'actions', label: '', render: (row) => cfg.rowActions(row) });
+
+  function swapOptions(scope, name, options, keep) {
+    const wrap = scope.querySelector(`[data-name="${name}"]`);
+    const el = wrap && wrap.querySelector('select');
+    if (!el) return;
+    el.textContent = '';
+    for (const opt of options) el.appendChild(h('option', { value: opt.value, text: opt.label }));
+    const wanted = (keep === undefined || keep === null) ? '' : String(keep);
+    el.value = wanted;
+    if (el.value !== wanted) el.value = options.length ? String(options[0].value) : '';
+  }
 
   /* --------------------------------------------------------------- dashboard */
   route({
@@ -718,23 +742,187 @@
       { key: 'email', label: 'Email' },
       { key: 'role', label: 'Role', render: (r) => pill(r.role, r.role === 'Super Admin' ? 'blue' : r.role === 'School Admin' ? 'green' : 'grey') },
       { key: 'school_id', label: 'School', render: (r) => (r.school_id ? schoolName(r.school_id) : 'All schools') },
-      { key: 'student_group_id', label: 'Batch', render: (r) => (r.student_group_id ? (groupNames([r.student_group_id]) || '-') : '-') },
+      { key: 'student_group_id', label: 'Batch', render: (r) => {
+        const g = groupOf(r.student_group_id);
+        if (!g) return '-';
+        return `${g.name}${g.section ? ` · ${g.section}` : ''}`;
+      } },
+      { key: 'semester', label: 'Semester', render: (r) => {
+        const g = groupOf(r.student_group_id);
+        return g && g.semester ? `Sem ${g.semester}` : '\u2014';
+      } },
+      { key: 'roll_number', label: 'Roll no.', render: (r) => r.roll_number || '\u2014' },
       { key: 'is_active', label: 'Active', render: (r) => statusPill(r.is_active ? 'Active' : 'Inactive') },
       actionsCol({ rowActions: rowsActionProxy('users') }),
     ],
-    filters: () => [{ name: 'role', label: 'All roles', options: meta().roles }],
-    fields: (record) => [
-      { name: 'full_name', label: 'Full name' },
-      { name: 'email', label: 'Email', type: 'email' },
-      { name: 'role', label: 'Role', type: 'select', options: meta().roles },
-      { name: 'school_id', label: 'School', type: 'select', options: [{ value: '', label: 'All schools (Super Admin)' }, ...optSchools()] },
-      { name: 'department_id', label: 'Department', type: 'select', options: [{ value: '', label: 'None' }, ...optDepts()] },
-      { name: 'student_group_id', label: 'Batch (course + year)', type: 'select', options: [{ value: '', label: 'Only for student accounts' }, ...optBatches()], help: 'A student sees only the papers of this batch. Leave blank for staff.' },
-      { name: 'roll_number', label: 'Roll number (students)', help: 'Shown on the student portal.' },
-      { name: 'password', label: record ? 'Reset password' : 'Temporary password', type: 'password', help: record ? 'Leave blank to keep the current password.' : 'Defaults to Examflow@123' },
-      { name: 'is_active', label: 'Account active', type: 'checkbox', checkLabel: 'User can sign in' },
+    filters: () => [
+      { name: 'role', label: 'All roles', options: meta().roles },
+      { name: 'student_group_id', label: 'All batches', options: optBatches() },
     ],
+    extraActions: () => [{ label: 'Add students', run: openBulkStudents }],
+    fields: (record) => {
+      const ownGroup = record ? groupOf(record.student_group_id) : null;
+      const pick = {
+        school: (record && record.school_id) || (ownGroup ? ownGroup.school_id : '') || '',
+        dept: (record && record.department_id) || (ownGroup ? ownGroup.department_id : '') || '',
+      };
+      const deptOptions = () => [{ value: '', label: 'None' }, ...optDepts(pick.school)];
+      const batchOptions = () => [{ value: '', label: 'Only for student accounts' },
+        ...optBatchesFor(pick.school, pick.dept)];
+      return [
+        { name: 'full_name', label: 'Full name' },
+        { name: 'email', label: 'Email', type: 'email' },
+        { name: 'role', label: 'Role', type: 'select', options: meta().roles },
+        {
+          name: 'school_id', label: 'School', type: 'select',
+          options: [{ value: '', label: 'All schools (Super Admin)' }, ...optSchools()],
+          onChange: (value, getters, body) => {
+            pick.school = value;
+            pick.dept = '';
+            swapOptions(body, 'department_id', deptOptions(), '');
+            swapOptions(body, 'student_group_id', batchOptions(), '');
+          },
+        },
+        {
+          name: 'department_id', label: 'Programme', type: 'select', options: deptOptions,
+          help: 'Only programmes of the selected school are listed.',
+          onChange: (value, getters, body) => {
+            pick.dept = value;
+            swapOptions(body, 'student_group_id', batchOptions(), '');
+          },
+        },
+        {
+          name: 'student_group_id', label: 'Batch (programme + semester)', type: 'select',
+          options: batchOptions,
+          help: 'A student sees only the papers of this batch. Leave blank for staff.',
+        },
+        { name: 'roll_number', label: 'Roll number (students)', help: 'Shown on the student portal.' },
+        { name: 'password', label: record ? 'Reset password' : 'Temporary password', type: 'password', help: record ? 'Leave blank to keep the current password.' : 'Defaults to Examflow@123' },
+        { name: 'is_active', label: 'Account active', type: 'checkbox', checkLabel: 'User can sign in' },
+      ];
+    },
   }));
+
+  /* --------------------------------------------- add students, semester-wise */
+  function openBulkStudents(ctx) {
+    const state = { school: '', dept: '' };
+    const schoolSel = select([{ value: '', label: 'Select a school' }, ...optSchools()]);
+    const deptSel = select([{ value: '', label: 'No programme' }, ...optDepts('')]);
+    const semSel = select([1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((n) => ({ value: String(n), label: `Semester ${n}` })));
+    const sectionInput = inputEl({ value: 'A', placeholder: 'A', style: 'max-width:90px' });
+    const yearSel = select(((meta().sessions && meta().sessions.length) ? meta().sessions : ['2026-27'])
+      .map((y) => ({ value: y, label: y })));
+    const passwordInput = inputEl({ value: 'Examflow@123' });
+    const area = h('textarea', {
+      class: 'textarea',
+      style: 'min-height:180px',
+      placeholder: 'Ravi Kumar, ravi.kumar@gmail.com, 9876543210, 12512014\nNeha Sharma, neha.sharma@gmail.com, 9876543211, 12512015',
+    });
+
+    function fillDept() {
+      deptSel.textContent = '';
+      for (const opt of [{ value: '', label: 'No programme' }, ...optDepts(state.school)]) {
+        deptSel.appendChild(h('option', { value: opt.value, text: opt.label }));
+      }
+      deptSel.value = '';
+    }
+    schoolSel.addEventListener('change', () => {
+      state.school = schoolSel.value;
+      state.dept = '';
+      fillDept();
+    });
+    deptSel.addEventListener('change', () => { state.dept = deptSel.value; });
+
+    const body = h('div', null,
+      h('div', { class: 'alert info', style: 'margin-bottom:12px', text: 'Pick the school, programme and semester once, then paste the students. The batch is created automatically if it does not exist yet.' }),
+      h('div', { class: 'grid two' },
+        field('School', schoolSel),
+        field('Programme', deptSel),
+        field('Semester', semSel),
+        field('Section', sectionInput),
+        field('Academic year', yearSel),
+        field('Temporary password', passwordInput)),
+      field('Students', area,
+        'One student per line: full name, email, mobile number, roll number. Email and mobile are optional after the name, but an email is needed to sign in.'));
+
+    const closeBtn = h('button', { class: 'btn secondary', text: 'Cancel' });
+    const submitBtn = h('button', { class: 'btn', text: 'Add students' });
+    const m = modal({ title: 'Add students', body, wide: true, footer: [closeBtn, submitBtn] });
+    closeBtn.addEventListener('click', m.close);
+
+    function parseRows(text) {
+      return String(text || '').split(/\r?\n/).map((line) => line.trim()).filter(Boolean).map((line) => {
+        const cells = line.split(/\s*[,\t;|]\s*/);
+        return {
+          full_name: (cells[0] || '').trim(),
+          email: (cells[1] || '').trim(),
+          phone: (cells[2] || '').trim(),
+          roll_number: (cells[3] || '').trim(),
+        };
+      });
+    }
+
+    submitBtn.addEventListener('click', async () => {
+      const students = parseRows(area.value);
+      if (!state.school) { toast('Select a school first.', 'err'); return; }
+      if (!students.length) { toast('Paste at least one student.', 'err'); return; }
+      submitBtn.disabled = true;
+      submitBtn.innerHTML = '<span class="spinner"></span> Adding';
+      try {
+        const res = await api('/api/users/bulk-students', {
+          method: 'POST',
+          body: {
+            school_id: state.school,
+            department_id: state.dept,
+            semester: Number(semSel.value),
+            section: sectionInput.value.trim() || 'A',
+            academic_year: yearSel.value,
+            password: passwordInput.value.trim() || null,
+            students,
+          },
+        });
+        await ctx.reloadMeta();
+        ctx.load();
+        showBulkResult(body, res);
+        closeBtn.textContent = 'Done';
+        submitBtn.remove();
+      } catch (err) {
+        toast(err.message, 'err');
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Add students';
+      }
+    });
+  }
+
+  function showBulkResult(body, res) {
+    const batch = res.batch || {};
+    const created = res.created || [];
+    const skipped = res.skipped || [];
+    body.textContent = '';
+    body.appendChild(h('div', { class: 'alert info', style: 'margin-bottom:12px' },
+      h('strong', { text: `${created.length} student${created.length === 1 ? '' : 's'} added` }),
+      h('div', { class: 'small', text: `${batch.group_name || 'Batch'} · Sem ${batch.semester || '-'} · Section ${batch.section || '-'} · ${batch.academic_year || ''}${batch.created ? ' · new batch created' : ''}` })));
+    if (created.length) {
+      body.appendChild(dataTable({
+        columns: [
+          { key: 'full_name', label: 'Name' },
+          { key: 'email', label: 'Email' },
+          { key: 'roll_number', label: 'Roll no.' },
+        ],
+        rows: created,
+      }));
+    }
+    if (skipped.length) {
+      body.appendChild(h('h3', { class: 'mt16', style: 'margin-bottom:8px;font-size:13px', text: `${skipped.length} skipped` }));
+      body.appendChild(dataTable({
+        columns: [
+          { key: 'email', label: 'Row' },
+          { key: 'reason', label: 'Reason' },
+        ],
+        rows: skipped,
+      }));
+    }
+  }
 
   /* ------------------------------------------------------------ student home */
   const LPU_GUIDELINES = [
