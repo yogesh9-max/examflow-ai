@@ -424,10 +424,31 @@ class Handler(BaseHTTPRequestHandler):
                     if taken:
                         raise auth.ValidationError(
                             "That mobile number is already linked to another account.")
+                group_id = body.get("student_group_id") or None
+                if not group_id and portal == "student" and body.get("semester"):
+                    # The student picked school + programme + semester themselves:
+                    # match that batch, creating it when the office has not yet.
+                    school_id = (body.get("school_id") or "").strip()
+                    if school_id and conn.execute("SELECT id FROM schools WHERE id=?",
+                                                  (school_id,)).fetchone():
+                        dept_id = (body.get("department_id") or "").strip() or None
+                        if dept_id:
+                            dept = conn.execute("SELECT school_id FROM departments WHERE id=?",
+                                                (dept_id,)).fetchone()
+                            if not dept or dept["school_id"] != school_id:
+                                dept_id = None
+                        try:
+                            semester = int(body.get("semester"))
+                        except (TypeError, ValueError):
+                            semester = 0
+                        if 1 <= semester <= 12:
+                            group_id, _created = api.ensure_student_batch(
+                                conn, school_id, dept_id, semester, body.get("section"),
+                                body.get("academic_year"))
                 user = auth.provision_gmail_account(
                     conn, email, password, portal, body.get("full_name"),
                     phone=phone or None,
-                    student_group_id=body.get("student_group_id") or None,
+                    student_group_id=group_id,
                     roll_number=body.get("roll_number") or None)
                 if not user:
                     raise auth.ValidationError("Could not create that account. Try another address.")

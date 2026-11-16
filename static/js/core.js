@@ -936,12 +936,15 @@
     const nameInput = inputEl({ placeholder: 'Full name as on your ID card', autocomplete: 'name' });
     const phoneInput = inputEl({ placeholder: '10-digit mobile, e.g. 98765 43210', autocomplete: 'tel' });
     const schoolSelect = select([], {});
-    const groupSelect = select([], {});
+    const deptSelect = select([], {});
+    const semSelect = select([], {});
+    const sectionSelect = select([], {});
     const signupExtra = h('div', { style: 'display:none' },
       field('Full name', nameInput),
       field('Mobile number', phoneInput, 'Your own number. You can sign in with it later instead of typing your email.'),
       field('School', schoolSelect, 'Your LPU school. The examination cell shown on your profile comes from here.'),
-      field('Programme, semester and section', groupSelect));
+      field('Programme', deptSelect, 'Your programme inside that school.'),
+      field('Semester and section', h('div', { class: 'row', style: 'gap:8px' }, semSelect, sectionSelect)));
     let pickersLoaded = false;
     async function loadPickers() {
       if (pickersLoaded) return;
@@ -955,17 +958,25 @@
             label: `${school.name}${school.code ? ' (' + school.code + ')' : ''}`,
           }));
         });
-        const fill = () => {
-          const forSchool = (data.groups || []).filter((g) => g.school_id === schoolSelect.value);
-          groupSelect.innerHTML = '';
-          if (!forSchool.length) {
-            groupSelect.appendChild(h('option', { value: '', text: 'No batch yet - choose later in my profile' }));
-            return;
-          }
-          forSchool.forEach((g) => groupSelect.appendChild(h('option', { value: g.id, label: g.label })));
+        const fillDepts = () => {
+          deptSelect.innerHTML = '';
+          deptSelect.appendChild(h('option', { value: '', text: 'Choose your programme' }));
+          (data.departments || [])
+            .filter((d) => d.school_id === schoolSelect.value)
+            .forEach((d) => deptSelect.appendChild(h('option', {
+              value: d.id, label: `${d.name}${d.code ? ' (' + d.code + ')' : ''}`,
+            })));
         };
-        schoolSelect.addEventListener('change', fill);
-        fill();
+        semSelect.innerHTML = '';
+        (data.semesters || [1, 2, 3, 4, 5, 6, 7, 8]).forEach((n) => semSelect.appendChild(h('option', {
+          value: String(n), label: `Semester ${n}`,
+        })));
+        sectionSelect.innerHTML = '';
+        (data.sections || ['A', 'B', 'C', 'D']).forEach((sec) => sectionSelect.appendChild(h('option', {
+          value: sec, label: `Section ${sec}`,
+        })));
+        schoolSelect.addEventListener('change', fillDepts);
+        fillDepts();
       } catch (err) {
         pickersLoaded = false;
       }
@@ -1033,7 +1044,10 @@
             { identifier, email: identifier, password: password.value, portal: portal },
             (createMode && portal === 'student')
               ? { full_name: nameInput.value.trim(), phone: phoneInput.value.trim(),
-                  student_group_id: groupSelect.value || null }
+                  school_id: schoolSelect.value || null,
+                  department_id: deptSelect.value || null,
+                  semester: Number(semSelect.value) || null,
+                  section: sectionSelect.value || null }
               : {}),
         });
         App.state.token = data.token;

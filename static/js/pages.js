@@ -1111,25 +1111,50 @@
         label: `${s.name}${s.code ? ' (' + s.code + ')' : ''}${s.batch_count ? ' - ' + s.batch_count + ' batches' : ' - no batches yet'}`,
       })), { value: currentSchoolId });
 
-      const groupSelect = select([], {});
-      function fillGroups() {
-        const forSchool = groups.filter((g) => g.school_id === schoolSelect.value);
-        groupSelect.innerHTML = '';
-        if (!forSchool.length) {
-          groupSelect.appendChild(h('option', { value: '', text: 'This school has no batches yet, ask the examination cell' }));
-          return;
+      const deptSelect = select([], {});
+      const semSelect = select([], {});
+      const sectionSelect = select([], {});
+      const deptList = options.departments_detail || options.departments || [];
+      const matchNote = h('div', { class: 'muted small mt4' });
+
+      (options.semesters || [1, 2, 3, 4, 5, 6, 7, 8]).forEach((n) => semSelect.appendChild(
+        h('option', { value: String(n), text: `Semester ${n}` })));
+      ['A', 'B', 'C', 'D'].forEach((sec) => sectionSelect.appendChild(
+        h('option', { value: sec, text: `Section ${sec}` })));
+
+      function fillDepts() {
+        deptSelect.innerHTML = '';
+        deptSelect.appendChild(h('option', { value: '', text: 'Choose your programme' }));
+        deptList
+          .filter((d) => d.school_id === schoolSelect.value)
+          .forEach((d) => deptSelect.appendChild(h('option', {
+            value: d.id, text: `${d.name}${d.code ? ' (' + d.code + ')' : ''}`,
+          })));
+        if (current.department_id && deptList.some((d) => d.id === current.department_id
+            && d.school_id === schoolSelect.value)) {
+          deptSelect.value = current.department_id;
         }
-        forSchool.forEach((g) => {
-          groupSelect.appendChild(h('option', {
-            value: g.id,
-            text: `${g.label}${g.department_name ? ' · ' + g.department_name : ''}${g.id === current.id ? ' (current)' : ''}`,
-          }));
-        });
-        const keep = forSchool.some((g) => g.id === current.id) ? current.id : forSchool[0].id;
-        groupSelect.value = keep;
+        paintMatch();
       }
-      fillGroups();
-      schoolSelect.addEventListener('change', fillGroups);
+      function matchBatch() {
+        return groups.find((g) => g.school_id === schoolSelect.value
+          && (!deptSelect.value || g.department_id === deptSelect.value)
+          && Number(g.semester) === Number(semSelect.value)
+          && String(g.section || 'A').toUpperCase() === String(sectionSelect.value || 'A').toUpperCase());
+      }
+      function paintMatch() {
+        const g = matchBatch();
+        matchNote.textContent = g
+          ? `You will join ${g.label}${g.department_name ? ' · ' + g.department_name : ''}.`
+          : 'That batch does not exist yet, so saving creates it for your semester.';
+      }
+      if (current.semester) semSelect.value = String(current.semester);
+      if (current.section) sectionSelect.value = String(current.section).toUpperCase();
+      schoolSelect.addEventListener('change', fillDepts);
+      fillDepts();
+      semSelect.addEventListener('change', paintMatch);
+      sectionSelect.addEventListener('change', paintMatch);
+      deptSelect.addEventListener('change', paintMatch);
 
       const schoolCard = h('div', { class: 'card mt16' });
       function paintSchoolCard() {
@@ -1154,8 +1179,14 @@
       saveBtn.addEventListener('click', async () => {
         saveBtn.disabled = true;
         try {
-          if (groupSelect.value && groupSelect.value !== current.id) {
-            await api('/api/student/enrol', { method: 'POST', body: { student_group_id: groupSelect.value, roll_number: rollInput.value.trim() } });
+          if (schoolSelect.value && semSelect.value) {
+            await api('/api/student/enrol', { method: 'POST', body: {
+              school_id: schoolSelect.value,
+              department_id: deptSelect.value || null,
+              semester: Number(semSelect.value),
+              section: sectionSelect.value,
+              roll_number: rollInput.value.trim(),
+            } });
           }
           await api('/api/student/profile', { method: 'POST', body: { roll_number: rollInput.value.trim(), phone: phoneInput.value.trim() } });
           toast('Profile saved', 'ok');
@@ -1172,7 +1203,11 @@
           h('div', null,
             h('div', { class: 'alert info', text: 'Pick your LPU school first, then the programme and semester inside it. Your papers, examination cell and guidelines follow that choice.' }),
             field('School', schoolSelect, 'Every school on the portal is listed, including the ones with no batches yet.'),
-            field('Programme, semester and section', groupSelect, 'Batches are shown exactly as your examination cell created them.'),
+            field('Programme', deptSelect, 'Your programme inside that school.'),
+            h('div', { class: 'grid two' },
+              field('Semester', semSelect),
+              field('Section', sectionSelect)),
+            matchNote,
             h('div', { class: 'grid two' },
               field('Roll number', rollInput, 'As printed on your ID card.'),
               field('Mobile number', phoneInput, 'Used for signing in and for examination office updates.')),
@@ -1348,19 +1383,56 @@
       view.innerHTML = '';
 
       const chooseBatch = (formView) => {
-        const groupSelect = select((options.groups || []).map((g) => ({
-          value: g.id,
-          label: `${g.school_name || 'School'} - ${g.label}`,
-        })), { value: (options.current || {}).id });
+        const cur = options.current || {};
+        const directory = (options.school_directory || [])
+          .filter((sc) => (sc.status || 'Active') === 'Active');
+        const deptList = options.departments_detail || options.departments || [];
+        const schoolSel = select(directory.map((sc) => ({
+          value: sc.id, label: `${sc.name}${sc.code ? ' (' + sc.code + ')' : ''}`,
+        })), { value: cur.school_id || (directory[0] || {}).id || '' });
+        const deptSel = select([], {});
+        const semSel = select((options.semesters || [1, 2, 3, 4, 5, 6, 7, 8])
+          .map((n) => ({ value: String(n), label: `Semester ${n}` })));
+        const secSel = select(['A', 'B', 'C', 'D'].map((x) => ({ value: x, label: `Section ${x}` })));
+        if (cur.semester) semSel.value = String(cur.semester);
+        if (cur.section) secSel.value = String(cur.section).toUpperCase();
+        const note = h('div', { class: 'muted small' });
+        function fillDepts() {
+          deptSel.textContent = '';
+          deptSel.appendChild(h('option', { value: '', text: 'Choose your programme' }));
+          deptList.filter((d) => d.school_id === schoolSel.value).forEach((d) => deptSel.appendChild(
+            h('option', { value: d.id, text: `${d.name}${d.code ? ' (' + d.code + ')' : ''}` })));
+          if (cur.department_id) deptSel.value = cur.department_id;
+          paintNote();
+        }
+        function paintNote() {
+          const g = (options.groups || []).find((x) => x.school_id === schoolSel.value
+            && (!deptSel.value || x.department_id === deptSel.value)
+            && Number(x.semester) === Number(semSel.value)
+            && String(x.section || 'A').toUpperCase() === String(secSel.value).toUpperCase());
+          note.textContent = g ? `You will join ${g.label}.` : 'Saving creates this batch for your semester.';
+        }
+        schoolSel.addEventListener('change', fillDepts);
+        semSel.addEventListener('change', paintNote);
+        secSel.addEventListener('change', paintNote);
+        deptSel.addEventListener('change', paintNote);
+        fillDepts();
+
         const rollInput = inputEl({ placeholder: 'e.g. 10 or 12512013', value: options.roll_number || '' });
         const saveBtn = h('button', { class: 'btn' }, 'Show my timetable');
         saveBtn.addEventListener('click', async () => {
-          if (!groupSelect.value) { toast('Choose your course and semester', 'err'); return; }
+          if (!schoolSel.value) { toast('Choose your school first', 'err'); return; }
           saveBtn.disabled = true;
           try {
             await api('/api/student/enrol', {
               method: 'POST',
-              body: { student_group_id: groupSelect.value, roll_number: rollInput.value.trim() },
+              body: {
+                school_id: schoolSel.value,
+                department_id: deptSel.value || null,
+                semester: Number(semSel.value),
+                section: secSel.value,
+                roll_number: rollInput.value.trim(),
+              },
             });
             toast('Batch linked. Showing only your papers now.', 'ok');
             renderMyExams(formView);
@@ -1370,10 +1442,15 @@
           }
         });
         return h('div', null,
-          h('div', { class: 'alert warn', text: 'Your account is not linked to a batch yet, so nothing can be shown. Pick your course, year and semester once.' }),
+          h('div', { class: 'alert warn', text: 'Your account is not linked to a batch yet, so nothing can be shown. Pick your school, programme and semester once.' }),
           h('div', { class: 'grid two' },
-            field('Course, year and semester', groupSelect),
-            field('Roll number', rollInput)),
+            field('School', schoolSel),
+            field('Programme', deptSel)),
+          h('div', { class: 'grid two' },
+            field('Semester', semSel),
+            field('Section', secSel)),
+          note,
+          h('div', { class: 'grid two' }, field('Roll number', rollInput, 'As printed on your ID card.')),
           h('div', { class: 'mt16' }, saveBtn));
       };
 

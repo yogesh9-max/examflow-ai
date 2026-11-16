@@ -381,6 +381,38 @@ def _minutes(value):
         return 0
 
 
+# ------------------------------------------------------- student batch helper
+def ensure_student_batch(conn, school_id, department_id, semester, section=None,
+                         academic_year=None, group_name=None):
+    """Find the batch for a school + programme + semester + section, creating it if needed.
+
+    Batches are the unit every paper is scheduled against, so both the examination
+    office and a student choosing their own course end up in the same row.
+    """
+    section = (section or "A").strip().upper()[:2] or "A"
+    academic_year = (academic_year or "2026-27").strip()
+    row = conn.execute(
+        """SELECT id FROM student_groups
+           WHERE school_id=? AND COALESCE(department_id,'')=? AND semester=?
+             AND COALESCE(section,'')=? AND COALESCE(academic_year,'')=?""",
+        (school_id, department_id or "", semester, section, academic_year)).fetchone()
+    if row:
+        return row["id"], False
+    dept_name = "General"
+    if department_id:
+        dept = conn.execute("SELECT department_name FROM departments WHERE id=?",
+                            (department_id,)).fetchone()
+        if dept:
+            dept_name = dept["department_name"]
+    gid = db.new_id()
+    conn.execute(
+        """INSERT INTO student_groups (id, school_id, department_id, group_name, semester,
+           section, student_count, academic_year, created_at) VALUES (?,?,?,?,?,?,?,?,?)""",
+        (gid, school_id, department_id, (group_name or f"{dept_name} Sem {semester}").strip(),
+         semester, section, 1, academic_year, db.now_iso()))
+    return gid, True
+
+
 # ------------------------------------------------- bulk student enrolment
 def bulk_students(conn, user, body):
     """Create student accounts semester-wise and bind them to the matching batch."""
@@ -419,22 +451,8 @@ def bulk_students(conn, user, body):
     if not isinstance(students, list) or not students:
         raise auth.ValidationError("Add at least one student.")
 
-    group = conn.execute(
-        """SELECT * FROM student_groups
-           WHERE school_id=? AND COALESCE(department_id,'')=? AND semester=?
-             AND COALESCE(section,'')=? AND COALESCE(academic_year,'')=?""",
-        (school_id, dept_id or "", semester, section, academic_year)).fetchone()
-    batch_created = False
-    if group is None:
-        gid = db.new_id()
-        conn.execute(
-            """INSERT INTO student_groups (id, school_id, department_id, group_name, semester,
-               section, student_count, academic_year, created_at) VALUES (?,?,?,?,?,?,?,?,?)""",
-            (gid, school_id, dept_id, group_name, semester, section,
-             max(1, len(students)), academic_year, db.now_iso()))
-        batch_created = True
-    else:
-        gid = group["id"]
+    gid, batch_created = ensure_student_batch(conn, school_id, dept_id, semester, section,
+                                              academic_year, group_name)
 
     default_password = body.get("password") or "Examflow@123"
     created, skipped = [], []
@@ -934,6 +952,8 @@ def enrolment_options(conn, user):
     directory = school_directory(conn)
     departments = department_directory(conn)
     return {"groups": groups, "current": current,
+            "semesters": list(range(1, 11)),
+            "sections": ["A", "B", "C", "D"],
             "roll_number": user.get("roll_number"),
             "schools": sorted({(g["school_id"], g["school_name"] or "-") for g in groups}),
             "school_directory": directory,
@@ -995,17 +1015,43 @@ def public_enrolment_options(conn):
                 (" - semester %s" % row["semester"]) if row.get("semester") else "",
                 (" (%s)" % row["academic_year"]) if row.get("academic_year") else ""),
         })
-    return {"school_directory": school_directory(conn), "groups": groups}
+    return {"school_directory": school_directory(conn), "groups": groups,
+            "departments": department_directory(conn),
+            "semesters": list(range(1, 11)),
+            "sections": ["A", "B", "C", "D"],
+            "academic_years": sorted({g["academic_year"] for g in groups if g.get("academic_year")})
+                              or ["2026-27"]}
 
 
 def enrol_student(conn, user, body):
-    """A student states their own batch. Year and course come from the group."""
+    """A student states their own batch, by id or by school + programme + semester."""
     if user["role"] != "Student":
         raise auth.ValidationError("Only a student account can be linked to a batch.")
     body = dict(body or {})
     group_id = (body.get("student_group_id") or "").strip()
     if not group_id:
-        raise auth.ValidationError("Choose your course and semester.")
+        school_id = (body.get("school_id") or "").strip()
+        dept_id = (body.get("department_id") or "").strip() or None
+        if not school_id:
+            raise auth.ValidationError("Choose your school, programme and semester.")
+        if not conn.execute("SELECT id FROM schools WHERE id=?", (school_id,)).fetchone():
+            raise auth.ValidationError("That school no longer exists.")
+        if dept_id:
+            dept = conn.execute("SELECT * FROM departments WHERE id=?", (dept_id,)).fetchone()
+            if not dept or dept["school_id"] != school_id:
+                raise auth.ValidationError("Pick a programme that belongs to your school.")
+        try:
+            semester = int(body.get("semester") or 0)
+        except (TypeError, ValueError):
+            semester = 0
+        if semester < 1 or semester > 12:
+            raise auth.ValidationError("Choose your semester.")
+        group_id, created = ensure_student_batch(
+            conn, school_id, dept_id, semester, body.get("section"),
+            body.get("academic_year"), body.get("group_name"))
+        if created:
+            db.audit(conn, user, "Created batch from student profile", "student_groups", group_id,
+                     f"Sem {semester} · Section {body.get('section') or 'A'}")
     row = conn.execute("SELECT * FROM student_groups WHERE id = ?", (group_id,)).fetchone()
     if not row:
         raise auth.ValidationError("That batch no longer exists.")
