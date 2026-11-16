@@ -315,6 +315,9 @@ class Handler(BaseHTTPRequestHandler):
                 conn.commit()
                 return self._redirect("/#google_token=" + quote(auth.make_token(user)))
 
+            if method == "GET" and path == "/api/public/enrolment-options":
+                return self._send(200, api.public_enrolment_options(conn))
+
             if method == "POST" and path == "/api/auth/request-code":
                 body = self._json_body()
                 portal = (body.get("portal") or "").strip().lower()
@@ -411,7 +414,21 @@ class Handler(BaseHTTPRequestHandler):
                     conn.commit()
                     return self._send(200, {"token": auth.make_token(user), "user": user,
                                             "created": False})
-                user = auth.provision_gmail_account(conn, email, password, portal, body.get("full_name"))
+                phone = (body.get("phone") or "").strip()
+                if phone:
+                    mobile = auth.normalise_mobile(phone)
+                    if not mobile:
+                        raise auth.ValidationError(
+                            "Enter a 10-digit Indian mobile number, for example 98765 43210.")
+                    taken = conn.execute("SELECT id FROM users WHERE phone = ?", (mobile,)).fetchone()
+                    if taken:
+                        raise auth.ValidationError(
+                            "That mobile number is already linked to another account.")
+                user = auth.provision_gmail_account(
+                    conn, email, password, portal, body.get("full_name"),
+                    phone=phone or None,
+                    student_group_id=body.get("student_group_id") or None,
+                    roll_number=body.get("roll_number") or None)
                 if not user:
                     raise auth.ValidationError("Could not create that account. Try another address.")
                 db.audit(conn, user, "Self-service account created", "user", user["id"],

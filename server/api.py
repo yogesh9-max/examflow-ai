@@ -824,6 +824,19 @@ def enrolment_options(conn, user):
     current = None
     if user.get("student_group_id"):
         current = next((g for g in groups if g["id"] == user["student_group_id"]), None)
+    directory = school_directory(conn)
+    departments = department_directory(conn)
+    return {"groups": groups, "current": current,
+            "roll_number": user.get("roll_number"),
+            "schools": sorted({(g["school_id"], g["school_name"] or "-") for g in groups}),
+            "school_directory": directory,
+            "departments_detail": departments,
+            "departments": sorted({(g["department_id"], g["department_name"] or "-")
+                                   for g in groups if g["department_id"]})}
+
+
+def school_directory(conn):
+    """Every school with the details a student profile shows. Shared by signup."""
     directory = []
     for row in conn.execute("""SELECT id, school_name, school_code, address, contact_email,
                                       contact_number, status FROM schools ORDER BY school_name""").fetchall():
@@ -841,19 +854,41 @@ def enrolment_options(conn, user):
             "status": row.get("status"),
             "batch_count": counts["groups_count"] if counts else 0,
         })
+    return directory
+
+
+def department_directory(conn):
     departments = []
     for row in conn.execute("""SELECT d.id, d.department_name, d.department_code, d.school_id
                                FROM departments d ORDER BY d.department_name""").fetchall():
         row = dict(row)
         departments.append({"id": row["id"], "name": row["department_name"],
                             "code": row.get("department_code"), "school_id": row["school_id"]})
-    return {"groups": groups, "current": current,
-            "roll_number": user.get("roll_number"),
-            "schools": sorted({(g["school_id"], g["school_name"] or "-") for g in groups}),
-            "school_directory": directory,
-            "departments_detail": departments,
-            "departments": sorted({(g["department_id"], g["department_name"] or "-")
-                                   for g in groups if g["department_id"]})}
+    return departments
+
+
+def public_enrolment_options(conn):
+    """What a visitor needs to sign up: schools, and the batches inside them."""
+    groups = []
+    for row in conn.execute("""SELECT g.id, g.group_name, g.semester, g.academic_year, g.section,
+                                      g.student_count, g.school_id, g.department_id,
+                                      s.school_name, d.department_name
+                               FROM student_groups g
+                               LEFT JOIN schools s ON s.id = g.school_id
+                               LEFT JOIN departments d ON d.id = g.department_id
+                               ORDER BY s.school_name, g.group_name""").fetchall():
+        row = dict(row)
+        groups.append({
+            "id": row["id"], "school_id": row["school_id"], "group_name": row["group_name"],
+            "semester": row.get("semester"), "academic_year": row.get("academic_year"),
+            "section": row.get("section"), "school_name": row.get("school_name"),
+            "department_name": row.get("department_name"),
+            "label": "%s%s%s" % (
+                row["group_name"],
+                (" - semester %s" % row["semester"]) if row.get("semester") else "",
+                (" (%s)" % row["academic_year"]) if row.get("academic_year") else ""),
+        })
+    return {"school_directory": school_directory(conn), "groups": groups}
 
 
 def enrol_student(conn, user, body):

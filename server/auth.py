@@ -144,7 +144,8 @@ def find_user(email: str):
 PORTAL_DEFAULT_ROLE = {"admin": "School Admin", "user": "Invigilator", "student": "Student"}
 
 
-def provision_gmail_account(conn, email, password, portal, full_name=None):
+def provision_gmail_account(conn, email, password, portal, full_name=None,
+                           phone=None, student_group_id=None, roll_number=None):
     """Create a self-service account for an email address on first sign-in.
 
     The portal decides the starting role; new accounts are bound to the primary
@@ -160,12 +161,37 @@ def provision_gmail_account(conn, email, password, portal, full_name=None):
         handle = email.split("@")[0].replace(".", " ").replace("_", " ").strip()
         name = " ".join(part.capitalize() for part in handle.split()) or email
 
+    # A student may sign up with their own mobile number and batch, which is what
+    # makes their profile theirs from the first minute. Both are optional so staff
+    # accounts and quick signups still work.
+    department_id = None
+    group_id = None
+    mobile = normalise_mobile(phone) if phone else None
+    if student_group_id:
+        group = conn.execute("SELECT * FROM student_groups WHERE id = ?", (student_group_id,)).fetchone()
+        if group and role == "Student":
+            group_id = group["id"]
+            department_id = group["department_id"] if "department_id" in dict(group) else None
+            if group["school_id"]:
+                school_id = group["school_id"]
+
     user_id = "usr_" + secrets.token_hex(8)
     conn.execute(
         "INSERT INTO users (id, full_name, email, password_hash, role, school_id, department_id,"
-        " is_active, created_at) VALUES (?,?,?,?,?,?,NULL,1,?)",
-        (user_id, name, email.strip().lower(), hash_password(password), role, school_id, _db.now_iso()),
+        " is_active, created_at) VALUES (?,?,?,?,?,?,?,1,?)",
+        (user_id, name, email.strip().lower(), hash_password(password), role, school_id,
+         department_id, _db.now_iso()),
     )
+    columns = {}
+    if mobile:
+        columns["phone"] = mobile
+    if group_id:
+        columns["student_group_id"] = group_id
+    if roll_number:
+        columns["roll_number"] = str(roll_number).strip()[:24]
+    if columns:
+        sets = ", ".join("%s = ?" % key for key in columns)
+        conn.execute("UPDATE users SET %s WHERE id = ?" % sets, list(columns.values()) + [user_id])
     # A new student is not put into a batch automatically: guessing the batch
     # would show them another cohort's papers. The portal asks them to pick their
     # course and semester once, and the examination office can correct it later.

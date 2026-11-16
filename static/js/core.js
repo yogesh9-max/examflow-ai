@@ -931,6 +931,45 @@
     const switchMode = h('button', { class: 'btn ghost block', type: 'button', style: 'margin-top:8px',
       text: 'New here? Create an account' });
     const googleSlot = h('div', { class: 'google-slot' });
+
+    /* Signing up as a student: their own name, Gmail address, mobile number and batch. */
+    const nameInput = inputEl({ placeholder: 'Full name as on your ID card', autocomplete: 'name' });
+    const phoneInput = inputEl({ placeholder: '10-digit mobile, e.g. 98765 43210', autocomplete: 'tel' });
+    const schoolSelect = select([], {});
+    const groupSelect = select([], {});
+    const signupExtra = h('div', { style: 'display:none' },
+      field('Full name', nameInput),
+      field('Mobile number', phoneInput, 'Your own number. You can sign in with it later instead of typing your email.'),
+      field('School', schoolSelect, 'Your LPU school. The examination cell shown on your profile comes from here.'),
+      field('Programme, semester and section', groupSelect));
+    let pickersLoaded = false;
+    async function loadPickers() {
+      if (pickersLoaded) return;
+      pickersLoaded = true;
+      try {
+        const data = await api('/api/public/enrolment-options');
+        schoolSelect.innerHTML = '';
+        (data.school_directory || []).forEach((school) => {
+          schoolSelect.appendChild(h('option', {
+            value: school.id,
+            label: `${school.name}${school.code ? ' (' + school.code + ')' : ''}`,
+          }));
+        });
+        const fill = () => {
+          const forSchool = (data.groups || []).filter((g) => g.school_id === schoolSelect.value);
+          groupSelect.innerHTML = '';
+          if (!forSchool.length) {
+            groupSelect.appendChild(h('option', { value: '', text: 'No batch yet - choose later in my profile' }));
+            return;
+          }
+          forSchool.forEach((g) => groupSelect.appendChild(h('option', { value: g.id, label: g.label })));
+        };
+        schoolSelect.addEventListener('change', fill);
+        fill();
+      } catch (err) {
+        pickersLoaded = false;
+      }
+    }
     const providers = App.state.providers || { password: true, google: false };
     const passwordOn = providers.password !== false;
     const form = h('form', { class: 'login-form' },
@@ -940,6 +979,7 @@
       error,
       passwordOn ? field('Email or mobile number', email, 'Use the mobile number you linked to your account to sign in without typing an email.') : null,
       passwordOn ? field('Password', password) : null,
+      passwordOn ? signupExtra : null,
       passwordOn ? submit : null,
       passwordOn ? switchMode : null,
       passwordOn ? modeNote : null,
@@ -979,9 +1019,22 @@
         return;
       }
       try {
+        if (createMode && portal === 'student') {
+          if (!nameInput.value.trim() || nameInput.value.trim().length < 2) {
+            throw new Error('Enter your full name.');
+          }
+          if (phoneInput.value.replace(/\D/g, '').length !== 10) {
+            throw new Error('Enter your own 10-digit mobile number.');
+          }
+        }
         const data = await api(createMode ? '/api/auth/gmail' : '/api/auth/login', {
           method: 'POST',
-          body: { identifier, email: identifier, password: password.value, portal: portal },
+          body: Object.assign(
+            { identifier, email: identifier, password: password.value, portal: portal },
+            (createMode && portal === 'student')
+              ? { full_name: nameInput.value.trim(), phone: phoneInput.value.trim(),
+                  student_group_id: groupSelect.value || null }
+              : {}),
         });
         App.state.token = data.token;
         App.state.user = data.user;
@@ -1016,9 +1069,14 @@
       submit.textContent = createMode ? 'Create account' : 'Sign in';
       switchMode.textContent = createMode ? 'Back to sign in' : 'New here? Create an account';
       modeNote.style.display = createMode ? 'flex' : 'none';
-      modeNote.textContent = 'Enter your full email address and pick a password (8 or more characters). '
-        + 'Access is created instantly \u2014 no email or verification code needed \u2014 as ' + roleName + '. '
-        + 'Already registered? Use Back to sign in.';
+      signupExtra.style.display = (createMode && portal === 'student') ? 'block' : 'none';
+      if (createMode && portal === 'student') loadPickers();
+      modeNote.textContent = portal === 'student'
+        ? 'Sign up with your own email and mobile number, pick your school and programme, and your '
+          + 'examination schedule appears straight away. Already registered? Use Back to sign in.'
+        : 'Enter your full email address and pick a password (8 or more characters). '
+          + 'Access is created instantly \u2014 no email or verification code needed \u2014 as ' + roleName + '. '
+          + 'Already registered? Use Back to sign in.';
       error.style.display = 'none';
       if (createMode) password.setAttribute('autocomplete', 'new-password');
       else password.setAttribute('autocomplete', 'current-password');
