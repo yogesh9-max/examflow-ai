@@ -54,18 +54,6 @@ def _columns(conn, table):
     return [r["name"] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()]
 
 
-# A batch realistically has under twenty papers. The cap is a guard against a bad
-# import, not a page size; when it trips, the API says so instead of failing.
-STUDENT_PAPER_CAP = 500
-
-
-def _chunks_tuple(values, size=400):
-    """Small helper so IN (...) lists never hit a parameter limit."""
-    values = list(values)
-    for start in range(0, len(values), size):
-        yield values[start:start + size]
-
-
 def _clean(table, body, conn):
     cols = set(_columns(conn, table))
     out = {}
@@ -206,8 +194,6 @@ def create_resource(conn, user, resource, body):
     marks = ", ".join("?" for _ in data)
     conn.execute(f"INSERT INTO {table} ({cols}) VALUES ({marks})", list(data.values()))
     conn.commit()
-    if resource == "examinations":
-        db.sync_examination_groups(data["id"])
     db.audit(conn, user, f"Created {resource}", table, data["id"])
     conn.commit()
     return get_resource(conn, user, resource, data["id"])
@@ -237,8 +223,6 @@ def update_resource(conn, user, resource, record_id, body):
     sets = ", ".join(f"{k} = ?" for k in data)
     conn.execute(f"UPDATE {table} SET {sets} WHERE id=?", list(data.values()) + [record_id])
     conn.commit()
-    if resource == "examinations" and "student_group_ids" in data:
-        db.sync_examination_groups(record_id)
     db.audit(conn, user, f"Updated {resource}", table, record_id,
              ", ".join(sorted(k for k in data if k != "password_hash")))
     conn.commit()
@@ -252,8 +236,6 @@ def delete_resource(conn, user, resource, record_id):
     _need(conn, table, record_id)
     _check_dependencies(conn, resource, record_id)
     conn.execute(f"DELETE FROM {table} WHERE id=?", (record_id,))
-    if resource == "examinations":
-        conn.execute("DELETE FROM examination_groups WHERE examination_id = ?", (record_id,))
     conn.commit()
     db.audit(conn, user, f"Deleted {resource}", table, record_id)
     conn.commit()
@@ -495,16 +477,10 @@ def meta(conn, user):
         # a student only sees their own programme: own group, own subjects, own school
         own_group = user.get("student_group_id")
         groups = [g for g in groups if g["id"] == own_group]
-        if own_group:
-            rows = conn.execute(
-                """SELECT e.id, e.subject_code, e.subject_name FROM examination_groups eg
-                   JOIN examinations e ON e.id = eg.examination_id
-                   WHERE eg.group_id = ?
-                   ORDER BY e.subject_name""", (own_group,)).fetchall()
-            exams = [{"id": r["id"], "name": f"{r['subject_code']} · {r['subject_name']}"}
-                     for r in rows]
-        else:
-            exams = []
+        exams = [e for e in exams if e["id"] in {
+            x["id"] for x in (db.decode_row("examinations", r) for r in conn.execute(
+                "SELECT * FROM examinations").fetchall())
+            if own_group in (x.get("student_group_ids") or [])}]
         rooms, invs, policies, slots = [], [], [], []
 
     return {
@@ -874,32 +850,21 @@ def my_exams(conn, user):
         if dept_row:
             dept = dict(dept_row)
 
-    # Indexed lookup through examination_groups: the cost of this page depends on the
-    # size of one batch, not on how many papers the university has loaded.
-    mine = [db.decode_row("examinations", r) for r in conn.execute(
-        """SELECT e.* FROM examination_groups eg
-           JOIN examinations e ON e.id = eg.examination_id
-           WHERE eg.group_id = ? AND e.school_id = ?
-           ORDER BY e.subject_name, e.subject_code""", (group_id, group["school_id"])).fetchall()]
+    exams = [db.decode_row("examinations", r) for r in conn.execute(
+        "SELECT * FROM examinations WHERE school_id = ? ORDER BY subject_name",
+        (group["school_id"],)).fetchall()]
+    mine = [e for e in exams if group_id in (e.get("student_group_ids") or [])]
 
     run = live_run(conn)
     placements = {}
-    exam_ids = [e["id"] for e in mine]
-    if run and exam_ids:
-        for chunk in _chunks_tuple(exam_ids):
-            marks = ",".join("?" for _ in chunk)
-            for row in conn.execute(
-                    """SELECT sa.examination_id, sa.examination_date, sa.start_time, sa.end_time,
-                              r.room_number, r.capacity, r.building
-                       FROM schedule_assignments sa
-                       LEFT JOIN rooms r ON r.id = sa.room_id
-                       WHERE sa.scheduling_run_id = ? AND sa.examination_id IN (%s)""" % marks,
-                    [run["id"]] + list(chunk)).fetchall():
-                placements[row["examination_id"]] = dict(row)
-
-    total_papers = len(mine)
-    if total_papers > STUDENT_PAPER_CAP:
-        mine = mine[:STUDENT_PAPER_CAP]
+    if run:
+        for row in conn.execute(
+                """SELECT sa.examination_id, sa.examination_date, sa.start_time, sa.end_time,
+                          r.room_number, r.capacity, r.building
+                   FROM schedule_assignments sa
+                   LEFT JOIN rooms r ON r.id = sa.room_id
+                   WHERE sa.scheduling_run_id = ?""", (run["id"],)).fetchall():
+            placements[row["examination_id"]] = dict(row)
 
     out = []
     for exam in mine:
@@ -941,8 +906,6 @@ def my_exams(conn, user):
                   "students": group.get("student_count")},
         "enrolled": True,
         "run": {"id": run["id"], "run_name": run["run_name"], "status": run["status"]} if run else None,
-        "total_papers": total_papers,
-        "truncated": total_papers > len(out),
         "exams": out,
     }
 

@@ -83,7 +83,6 @@ def migrate_from_sqlite(source_path, reset=False):
         target.executescript(db.SCHEMA)
         target.commit()
         db._ensure_user_columns()
-        db.ensure_group_index()
         if reset:
             target_tables = [row["name"] for row in target.execute(
                 "SELECT table_name AS name FROM information_schema.tables "
