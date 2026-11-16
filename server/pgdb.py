@@ -146,8 +146,12 @@ class PgConnection:
     def execute(self, sql, params=None):
         text = translate(sql, params)
         cursor = self._raw.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        # This schema stores every flag as INTEGER (is_active, is_enabled, is_mandatory,
+        # is_read). The UI and the JSON API send real booleans, and Postgres refuses to
+        # compare an integer column with a boolean, so normalise here once.
+        bound = tuple(int(v) if isinstance(v, bool) else v for v in params) if params else None
         try:
-            cursor.execute(text, tuple(params) if params else None)
+            cursor.execute(text, bound)
         except Exception:
             cursor.close()
             raise
