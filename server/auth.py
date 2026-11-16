@@ -166,15 +166,9 @@ def provision_gmail_account(conn, email, password, portal, full_name=None):
         " is_active, created_at) VALUES (?,?,?,?,?,?,NULL,1,?)",
         (user_id, name, email.strip().lower(), hash_password(password), role, school_id, _db.now_iso()),
     )
-    group_id = None
-    if role == "Student" and school_id:
-        group = conn.execute(
-            "SELECT id FROM student_groups WHERE school_id = ? ORDER BY created_at LIMIT 1",
-            (school_id,),
-        ).fetchone()
-        group_id = group["id"] if group else None
-        if group_id:
-            conn.execute("UPDATE users SET student_group_id = ? WHERE id = ?", (group_id, user_id))
+    # A new student is not put into a batch automatically: guessing the batch
+    # would show them another cohort's papers. The portal asks them to pick their
+    # course and semester once, and the examination office can correct it later.
     conn.commit()
     return find_user(email)
 

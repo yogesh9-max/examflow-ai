@@ -11,6 +11,10 @@
   const optDepts = (schoolId) => meta().departments
     .filter((d) => !schoolId || d.school_id === schoolId)
     .map((d) => ({ value: d.id, label: `${d.name} (${d.code})` }));
+  const optBatches = () => meta().groups.map((g) => ({
+    value: g.id,
+    label: `${g.name}${g.semester ? ` - semester ${g.semester}` : ''}${g.academic_year ? ` (${g.academic_year})` : ''}`,
+  }));
   const optGroups = (schoolId) => meta().groups
     .filter((g) => !schoolId || g.school_id === schoolId)
     .map((g) => ({ value: g.id, label: `${g.name}${g.section ? ` · ${g.section}` : ''} (${g.student_count})` }));
@@ -714,6 +718,7 @@
       { key: 'email', label: 'Email' },
       { key: 'role', label: 'Role', render: (r) => pill(r.role, r.role === 'Super Admin' ? 'blue' : r.role === 'School Admin' ? 'green' : 'grey') },
       { key: 'school_id', label: 'School', render: (r) => (r.school_id ? schoolName(r.school_id) : 'All schools') },
+      { key: 'student_group_id', label: 'Batch', render: (r) => (r.student_group_id ? (groupNames([r.student_group_id]) || '-') : '-') },
       { key: 'is_active', label: 'Active', render: (r) => statusPill(r.is_active ? 'Active' : 'Inactive') },
       actionsCol({ rowActions: rowsActionProxy('users') }),
     ],
@@ -724,6 +729,8 @@
       { name: 'role', label: 'Role', type: 'select', options: meta().roles },
       { name: 'school_id', label: 'School', type: 'select', options: [{ value: '', label: 'All schools (Super Admin)' }, ...optSchools()] },
       { name: 'department_id', label: 'Department', type: 'select', options: [{ value: '', label: 'None' }, ...optDepts()] },
+      { name: 'student_group_id', label: 'Batch (course + year)', type: 'select', options: [{ value: '', label: 'Only for student accounts' }, ...optBatches()], help: 'A student sees only the papers of this batch. Leave blank for staff.' },
+      { name: 'roll_number', label: 'Roll number (students)', help: 'Shown on the student portal.' },
       { name: 'password', label: record ? 'Reset password' : 'Temporary password', type: 'password', help: record ? 'Leave blank to keep the current password.' : 'Defaults to Examflow@123' },
       { name: 'is_active', label: 'Account active', type: 'checkbox', checkLabel: 'User can sign in' },
     ],
@@ -849,38 +856,92 @@
   route({
     id: 'my-exams',
     title: 'My Exams',
-    render: async (view) => {
-      view.appendChild(pageHead('My exams', 'Your own examination schedule: dates, sessions and rooms.'));
+    render: async function renderMyExams(view) {
+      view.innerHTML = '';
+      view.appendChild(pageHead('My exams', 'Only your own papers, for your course and semester.'));
       view.appendChild(loadingBlock('Loading your schedule'));
-      let data;
-      try { data = await api('/api/my-exams'); } catch (err) {
+      let data, options = null;
+      try {
+        data = await api('/api/my-exams');
+        if (!data.enrolled) options = await api('/api/student/enrolment-options');
+      } catch (err) {
         view.innerHTML = '';
         view.appendChild(h('div', { class: 'alert err', text: err.message }));
         return;
       }
       view.innerHTML = '';
-      view.appendChild(pageHead('My exams', 'Your own examination schedule: dates, sessions and rooms.'));
 
-      if (!data.group) {
-        view.appendChild(h('div', { class: 'alert warn', text: 'Your account is not linked to a student group yet. Ask the examination office to add you to your batch.' }));
+      const chooseBatch = (formView) => {
+        const groupSelect = select((options.groups || []).map((g) => ({
+          value: g.id,
+          label: `${g.school_name || 'School'} - ${g.label}`,
+        })), { value: (options.current || {}).id });
+        const rollInput = inputEl({ placeholder: 'e.g. 10 or 12512013', value: options.roll_number || '' });
+        const saveBtn = h('button', { class: 'btn' }, 'Show my timetable');
+        saveBtn.addEventListener('click', async () => {
+          if (!groupSelect.value) { toast('Choose your course and semester', 'err'); return; }
+          saveBtn.disabled = true;
+          try {
+            await api('/api/student/enrol', {
+              method: 'POST',
+              body: { student_group_id: groupSelect.value, roll_number: rollInput.value.trim() },
+            });
+            toast('Batch linked. Showing only your papers now.', 'ok');
+            renderMyExams(formView);
+          } catch (err) {
+            saveBtn.disabled = false;
+            toast(err.message, 'err');
+          }
+        });
+        return h('div', null,
+          h('div', { class: 'alert warn', text: 'Your account is not linked to a batch yet, so nothing can be shown. Pick your course, year and semester once.' }),
+          h('div', { class: 'grid two' },
+            field('Course, year and semester', groupSelect),
+            field('Roll number', rollInput)),
+          h('div', { class: 'mt16' }, saveBtn));
+      };
+
+      if (!data.enrolled) {
+        view.appendChild(pageHead('My exams', 'Only your own papers, for your course and semester.'));
+        view.appendChild(h('div', { class: 'grid kpi' },
+          kpi('Student', data.student ? data.student.name : '-', data.student ? data.student.email : ''),
+          kpi('Batch', 'Not linked', 'Pick your course and semester')));
+        view.appendChild(h('div', { class: 'mt16' }, card('Link your batch', chooseBatch(view))));
         return;
       }
+
       const exams = data.exams || [];
       const scheduled = exams.filter((e) => e.scheduled);
       const next = scheduled[0];
       const published = data.run && ['Published', 'Approved'].includes(data.run.status);
+      const course = data.course || {};
+      const changeBtn = h('button', { class: 'btn secondary' }, 'Change batch');
+      changeBtn.addEventListener('click', async () => {
+        try {
+          options = await api('/api/student/enrolment-options');
+        } catch (err) { toast(err.message, 'err'); return; }
+        view.innerHTML = '';
+        view.appendChild(pageHead('My exams', 'Link your account to a different course and semester.'));
+        view.appendChild(card('Change batch', chooseBatch(view)));
+      });
 
+      view.appendChild(pageHead('My exams', 'Only your own papers, for your course and semester.', [changeBtn]));
       view.appendChild(h('div', { class: 'grid kpi' },
-        kpi('Student', data.student ? data.student.name : '-', data.group.group_name),
+        kpi('Student', data.student ? data.student.name : '-',
+          data.student && data.student.roll_number ? `Roll no. ${data.student.roll_number}` : (data.student ? data.student.email : '')),
+        kpi('Course', course.department || course.programme || '-',
+          [course.school, course.semester_label].filter(Boolean).join(' · ')),
+        kpi('Year', course.academic_year || '-',
+          `${data.batch ? data.batch.students || 0 : 0} students in this batch`),
         kpi('Papers', exams.length, `${scheduled.length} scheduled`),
-        kpi('Next exam', next ? fmtDate(next.examination_date) : '-', next ? `${next.start_time} · ${next.subject_code}` : 'Not published yet'),
         kpi('Timetable', published ? 'Published' : 'Draft', data.run ? data.run.run_name : 'No run yet')));
 
       if (!published) {
         view.appendChild(h('div', { class: 'alert warn mt16', text: 'The examination office has not published this timetable yet, so dates may still change.' }));
       }
 
-      view.appendChild(h('div', { class: 'mt16' }, card('My examination schedule',
+      view.appendChild(h('div', { class: 'mt16' }, card(
+        `My papers · ${course.programme || 'batch'}${course.semester_label && course.semester_label !== '-' ? ' · ' + course.semester_label : ''}`,
         dataTable({
           columns: [
             { key: 'examination_date', label: 'Date', render: (r) => (r.examination_date ? fmtDate(r.examination_date) : 'Not scheduled') },
@@ -888,16 +949,17 @@
             { key: 'subject_code', label: 'Code', render: (r) => h('b', { text: r.subject_code }) },
             { key: 'subject_name', label: 'Paper' },
             { key: 'room', label: 'Room', render: (r) => (r.room ? `${r.room}${r.building ? ' · ' + r.building : ''}` : 'Assigning') },
-            { key: 'seats', label: 'Seats', render: (r) => (r.seats ? String(r.seats) : '-') },
             { key: 'duration_minutes', label: 'Duration', render: (r) => `${r.duration_minutes} min` },
           ],
           rows: exams,
-          empty: 'No papers have been scheduled for your group yet.',
-        }))));
+          empty: 'No papers have been scheduled for your batch yet.',
+        }),
+        course.section ? `Section ${course.section}` : null)));
 
       view.appendChild(h('div', { class: 'mt16' }, card('Important',
-        h('div', { class: 'muted small', text: 'Report to the room 15 minutes before the session starts with your identity card. If a paper is not scheduled yet, the examination office will publish it shortly.' }))));
+        h('div', { class: 'muted small', text: 'Only the papers of your own batch are listed here. Report to the room 15 minutes before the session starts with your identity card.' }))));
     },
   });
+
 
 })();

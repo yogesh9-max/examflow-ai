@@ -494,6 +494,12 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, api.my_duties(conn, user))
             if path == "/api/my-exams":
                 return self._send(200, api.my_exams(conn, user))
+
+            if path == "/api/student/enrolment-options":
+                return self._send(200, api.enrolment_options(conn, user))
+
+            if method == "POST" and path == "/api/student/enrol":
+                return self._send(200, api.enrol_student(conn, user, self._json_body()))
             if method == "POST" and path == "/api/my-duties/report-issue":
                 return self._send(200, api.report_availability_issue(conn, user, self._json_body()))
 

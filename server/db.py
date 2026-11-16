@@ -314,6 +314,9 @@ def _ensure_user_columns() -> None:
         if "phone" not in columns:
             conn.execute("ALTER TABLE users ADD COLUMN phone TEXT")
             conn.commit()
+        if "roll_number" not in columns:
+            conn.execute("ALTER TABLE users ADD COLUMN roll_number TEXT")
+            conn.commit()
         # one mobile number per account; partial index keeps NULLs out of the way
         try:
             conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS users_phone_key "

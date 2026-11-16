@@ -181,6 +181,11 @@ def create_resource(conn, user, resource, body):
         password = body.pop("password", None) or "Examflow@123"
         body["password_hash"] = auth.hash_password(password)
     data = _clean(table, body, conn)
+    if resource == "users" and data.get("student_group_id") and not data.get("department_id"):
+        grp = conn.execute("SELECT department_id FROM student_groups WHERE id = ?",
+                           (data["student_group_id"],)).fetchone()
+        if grp and grp["department_id"]:
+            data["department_id"] = grp["department_id"]
     data["id"] = db.new_id()
     data["created_at"] = db.now_iso()
     if resource == "users":
@@ -204,6 +209,11 @@ def update_resource(conn, user, resource, record_id, body):
     if resource == "users" and body.get("password"):
         body["password_hash"] = auth.hash_password(body.pop("password"))
     data = _clean(table, body, conn)
+    if resource == "users" and data.get("student_group_id") and not data.get("department_id"):
+        grp = conn.execute("SELECT department_id FROM student_groups WHERE id = ?",
+                           (data["student_group_id"],)).fetchone()
+        if grp and grp["department_id"]:
+            data["department_id"] = grp["department_id"]
     if resource == "users" and body.get("password_hash"):
         data["password_hash"] = body["password_hash"]
     if "updated_at" in _columns(conn, table):
@@ -444,7 +454,9 @@ def meta(conn, user):
               "code": r["department_code"]} for r in conn.execute(
         "SELECT * FROM departments ORDER BY department_name").fetchall()]
     groups = [{"id": r["id"], "name": r["group_name"], "school_id": r["school_id"],
+               "department_id": r["department_id"],
                "student_count": r["student_count"], "semester": r["semester"],
+               "academic_year": r["academic_year"],
                "section": r["section"]} for r in conn.execute(
         "SELECT * FROM student_groups ORDER BY group_name").fetchall()]
     rooms = [{"id": r["id"], "name": r["room_number"], "school_id": r["school_id"],
@@ -751,20 +763,96 @@ def live_run(conn):
     return db.decode_row("scheduling_runs", row) if row else None
 
 
+def enrolment_options(conn, user):
+    """Every student group in the university, labelled by course, year and section.
+
+    A student is allowed to read this even though the rest of their data is
+    scoped to their own batch: they need it to say which batch they belong to.
+    """
+    rows = conn.execute(
+        """SELECT g.id, g.group_name, g.semester, g.academic_year, g.section,
+                  g.student_count, g.school_id, g.department_id,
+                  s.school_name, s.school_code,
+                  d.department_name, d.department_code
+           FROM student_groups g
+           LEFT JOIN schools s ON s.id = g.school_id
+           LEFT JOIN departments d ON d.id = g.department_id
+           ORDER BY s.school_name, g.group_name""").fetchall()
+    groups = []
+    for r in rows:
+        r = dict(r)
+        groups.append({
+            "id": r["id"],
+            "group_name": r["group_name"],
+            "semester": r["semester"],
+            "academic_year": r.get("academic_year"),
+            "section": r.get("section"),
+            "student_count": r["student_count"],
+            "school_id": r["school_id"],
+            "department_id": r.get("department_id"),
+            "school_name": r.get("school_name"),
+            "department_name": r.get("department_name"),
+            "label": "%s%s%s" % (
+                r["group_name"],
+                (" - semester %s" % r["semester"]) if r.get("semester") else "",
+                (" (%s)" % r["academic_year"]) if r.get("academic_year") else ""),
+        })
+    current = None
+    if user.get("student_group_id"):
+        current = next((g for g in groups if g["id"] == user["student_group_id"]), None)
+    return {"groups": groups, "current": current,
+            "roll_number": user.get("roll_number"),
+            "schools": sorted({(g["school_id"], g["school_name"] or "-") for g in groups}),
+            "departments": sorted({(g["department_id"], g["department_name"] or "-")
+                                   for g in groups if g["department_id"]})}
+
+
+def enrol_student(conn, user, body):
+    """A student states their own batch. Year and course come from the group."""
+    if user["role"] != "Student":
+        raise auth.ValidationError("Only a student account can be linked to a batch.")
+    body = dict(body or {})
+    group_id = (body.get("student_group_id") or "").strip()
+    if not group_id:
+        raise auth.ValidationError("Choose your course and semester.")
+    row = conn.execute("SELECT * FROM student_groups WHERE id = ?", (group_id,)).fetchone()
+    if not row:
+        raise auth.ValidationError("That batch no longer exists.")
+    group = dict(row)
+    roll = (body.get("roll_number") or "").strip()[:24]
+    conn.execute("UPDATE users SET student_group_id = ?, department_id = ? WHERE id = ?",
+                 (group["id"], group.get("department_id"), user["id"]))
+    if roll:
+        conn.execute("UPDATE users SET roll_number = ? WHERE id = ?", (roll, user["id"]))
+    conn.commit()
+    db.audit(conn, user, "Linked batch", "users", user["id"], group["group_name"])
+    conn.commit()
+    return my_exams(conn, dict(user, student_group_id=group["id"], roll_number=roll or user.get("roll_number")))
+
+
 def my_exams(conn, user):
     """A student's own examination schedule: only the groups they belong to."""
     group_id = user.get("student_group_id")
+    empty = {"student": None, "group": None, "school": None, "course": None,
+             "enrolled": False, "run": None, "exams": []}
     if not group_id:
-        return {"student": None, "group": None, "school": None, "run": None, "exams": []}
+        return empty
     group_row = conn.execute("SELECT * FROM student_groups WHERE id = ?", (group_id,)).fetchone()
     if not group_row:
-        return {"student": None, "group": None, "school": None, "run": None, "exams": []}
+        return empty
     group = db.decode_row("student_groups", group_row)
     school_row = conn.execute("SELECT * FROM schools WHERE id = ?", (group["school_id"],)).fetchone()
     school = db.decode_row("schools", school_row) if school_row else None
+    dept = None
+    if group.get("department_id"):
+        dept_row = conn.execute("SELECT * FROM departments WHERE id = ?",
+                                (group["department_id"],)).fetchone()
+        if dept_row:
+            dept = dict(dept_row)
 
     exams = [db.decode_row("examinations", r) for r in conn.execute(
-        "SELECT * FROM examinations ORDER BY subject_name").fetchall()]
+        "SELECT * FROM examinations WHERE school_id = ? ORDER BY subject_name",
+        (group["school_id"],)).fetchall()]
     mine = [e for e in exams if group_id in (e.get("student_group_ids") or [])]
 
     run = live_run(conn)
@@ -796,10 +884,30 @@ def my_exams(conn, user):
             "scheduled": bool(placed.get("examination_date")),
         })
     out.sort(key=lambda e: (e["examination_date"] or "9999", e["start_time"] or "", e["subject_code"]))
-    return {"student": {"name": user["full_name"], "email": user["email"]},
-            "group": group, "school": school,
-            "run": {"id": run["id"], "run_name": run["run_name"], "status": run["status"]} if run else None,
-            "exams": out}
+    batch_year = group.get("academic_year") or "-"
+    semester = group.get("semester")
+    return {
+        "student": {"name": user["full_name"], "email": user["email"],
+                    "roll_number": user.get("roll_number")},
+        "group": group,
+        "school": school,
+        "course": {
+            "school": (school or {}).get("school_name"),
+            "department": (dept or {}).get("department_name"),
+            "programme": group.get("group_name"),
+            "semester": semester,
+            "semester_label": ("Semester %s" % semester) if semester else "-",
+            "academic_year": batch_year,
+            "section": group.get("section"),
+        },
+        "batch": {"label": group.get("group_name"),
+                  "year": batch_year,
+                  "semester": semester,
+                  "students": group.get("student_count")},
+        "enrolled": True,
+        "run": {"id": run["id"], "run_name": run["run_name"], "status": run["status"]} if run else None,
+        "exams": out,
+    }
 
 
 def my_duties(conn, user):
