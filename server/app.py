@@ -190,8 +190,14 @@ class Handler(BaseHTTPRequestHandler):
         header = self.headers.get("Authorization") or ""
         token = header[7:].strip() if header.lower().startswith("bearer ") else None
         if not token:
-            raise api.auth.Forbidden("Sign in to continue")
-        return auth.current_user(token)
+            raise api.auth.Unauthorized("Sign in to continue")
+        user = auth.current_user(token)
+        if user is None:
+            # An expired, tampered or deleted-session token is a sign-in problem,
+            # not a server fault: answer 401 so the client clears it and shows
+            # the login page instead of a 500 in the console and the logs.
+            raise api.auth.Unauthorized("Your session has expired. Please sign in again.")
+        return user
 
     def _dispatch(self, method):
         parsed = urlparse(self.path)
@@ -500,6 +506,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, {"token": auth.make_token(user), "user": user})
 
             user = self._user(conn)
+            if user is None:
+                raise api.auth.Unauthorized("Your session has expired. Please sign in again.")
 
             if path == "/api/auth/me":
                 return self._send(200, {"user": user})

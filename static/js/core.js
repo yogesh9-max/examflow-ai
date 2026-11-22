@@ -800,8 +800,11 @@
   }
 
   function loadGoogleButton(slot, portal) {
-    fetch('/api/auth/providers')
-      .then((response) => (response.ok ? response.json() : { google: false }))
+    /* boot() already asks for the providers once; reuse that answer instead of
+       a second round trip on the same page load. */
+    const known = App.state.providers;
+    (known ? Promise.resolve(known) : fetch('/api/auth/providers')
+      .then((response) => (response.ok ? response.json() : { google: false })))
       .then((providers) => {
         if (!providers || !providers.google) return;
         const primary = providers.password === false;
@@ -1130,7 +1133,27 @@
     renderLogin();
   }
 
+  /* A token past its exp is dead weight: sending it only earns a 401 and a red
+     line in the console, so the shell drops it and shows the sign-in form. */
+  function tokenExpired(token) {
+    try {
+      const part = (String(token).split('.')[1] || '').replace(/-/g, '+').replace(/_/g, '/');
+      const payload = JSON.parse(atob(part));
+      return payload && payload.exp ? payload.exp * 1000 <= Date.now() : false;
+    } catch (err) {
+      return true;
+    }
+  }
+
   async function start() {
+    if (App.state.token && tokenExpired(App.state.token)) {
+      App.state.token = null;
+      App.state.user = null;
+      App.state.meta = null;
+      localStorage.removeItem('examflow_token');
+      renderLogin('Your session has ended. Sign in again to continue.');
+      return;
+    }
     if (!App.state.token) { renderLogin(); return; }
     try {
       // Two independent lookups: fetch them together so the shell is not paying
