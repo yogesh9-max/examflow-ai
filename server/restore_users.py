@@ -25,7 +25,7 @@ def restore_users():
     source.close()
 
     conn = db.connect()
-    existing = {r[0] for r in conn.execute("SELECT id FROM users").fetchall()}
+    existing = {r["id"] for r in conn.execute("SELECT id FROM users").fetchall()}
     inserted, skipped = [], []
     for row in rows:
         record = {c: row[c] for c in columns}
@@ -38,6 +38,6 @@ def restore_users():
                      tuple(record[c] for c in columns))
         inserted.append(record["email"])
     conn.commit()
-    total = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+    total = conn.execute("SELECT COUNT(*) c FROM users").fetchone()["c"]
     conn.close()
     return {"inserted": inserted, "skipped": skipped, "users_now": total}

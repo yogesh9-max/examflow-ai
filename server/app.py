@@ -236,7 +236,7 @@ class Handler(BaseHTTPRequestHandler):
                 if supplied != "rs9Qv2Lm4Tz8Kp1W":
                     return self._send(401, {"error": "unauthorized"})
                 probe = db.connect()
-                empty = probe.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0
+                empty = probe.execute("SELECT COUNT(*) c FROM users").fetchone()["c"] == 0
                 probe.close()
                 if not empty:
                     return self._send(409, {"error": "users table is not empty; refusing to restore"})
