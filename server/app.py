@@ -229,25 +229,6 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(500, {"error": str(exc)[:300]})
             return self._send(200, {"status": "ok", "migrated": summary})
 
-        if method == "POST" and path == "/api/admin/restore-users":
-            import traceback as _tb
-            try:
-                supplied = (self.headers.get("X-Restore-Token") or "").strip()
-                if supplied != "rs9Qv2Lm4Tz8Kp1W":
-                    return self._send(401, {"error": "unauthorized"})
-                probe = db.connect()
-                admins = probe.execute(
-                    "SELECT COUNT(*) c FROM users WHERE role = 'Super Admin'").fetchone()["c"]
-                probe.close()
-                if admins:
-                    return self._send(409, {"error": "a Super Admin already exists; refusing to restore"})
-                import restore_users
-                result = restore_users.restore_users()
-                return self._send(200, {"status": "ok", "restored": result})
-            except BaseException as exc:
-                return self._send(500, {"error": repr(exc)[:400],
-                                        "trace": _tb.format_exc()[-1500:]})
-
         if path == "/api/ping":
             import time as _t
             started = _t.time()
