@@ -230,22 +230,22 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, {"status": "ok", "migrated": summary})
 
         if method == "POST" and path == "/api/admin/restore-users":
-            # Temporary recovery hook: only usable while the users table is empty.
-            supplied = (self.headers.get("X-Restore-Token") or "").strip()
-            if supplied != "rs9Qv2Lm4Tz8Kp1W":
-                return self._send(401, {"error": "unauthorized"})
-            conn_probe = db.connect()
-            empty = conn_probe.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0
-            conn_probe.close()
-            if not empty:
-                return self._send(409, {"error": "users table is not empty; refusing to restore"})
+            import traceback as _tb
             try:
+                supplied = (self.headers.get("X-Restore-Token") or "").strip()
+                if supplied != "rs9Qv2Lm4Tz8Kp1W":
+                    return self._send(401, {"error": "unauthorized"})
+                probe = db.connect()
+                empty = probe.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0
+                probe.close()
+                if not empty:
+                    return self._send(409, {"error": "users table is not empty; refusing to restore"})
                 import restore_users
-                return self._send(200, {"status": "ok", "restored": restore_users.restore_users()})
-            except Exception as exc:
-                import traceback
-                return self._send(500, {"error": str(exc)[:400],
-                                        "trace": traceback.format_exc()[-1200:]})
+                result = restore_users.restore_users()
+                return self._send(200, {"status": "ok", "restored": result})
+            except BaseException as exc:
+                return self._send(500, {"error": repr(exc)[:400],
+                                        "trace": _tb.format_exc()[-1500:]})
 
         if path == "/api/ping":
             import time as _t
