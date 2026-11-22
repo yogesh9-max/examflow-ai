@@ -1134,15 +1134,29 @@
   }
 
   /* A token past its exp is dead weight: sending it only earns a 401 and a red
-     line in the console, so the shell drops it and shows the sign-in form. */
+     line in the console, so the shell drops it and shows the sign-in form.
+     Tokens are "<payload>.<signature>", so every segment is tried and only a
+     segment that really decodes to JSON with an exp decides the answer. If
+     nothing parses we say "not expired" and let the server judge: guessing
+     wrong here would sign a valid user out. */
   function tokenExpired(token) {
-    try {
-      const part = (String(token).split('.')[1] || '').replace(/-/g, '+').replace(/_/g, '/');
-      const payload = JSON.parse(atob(part));
-      return payload && payload.exp ? payload.exp * 1000 <= Date.now() : false;
-    } catch (err) {
-      return true;
+    const segments = String(token || '').split('.');
+    for (let i = 0; i < segments.length; i += 1) {
+      const part = segments[i];
+      if (!part) continue;
+      try {
+        let b64 = part.replace(/-/g, '+').replace(/_/g, '/');
+        while (b64.length % 4) b64 += '=';
+        const binary = atob(b64);
+        const json = decodeURIComponent(binary.split('').map((ch) => (
+          '%' + ('00' + ch.charCodeAt(0).toString(16)).slice(-2))).join(''));
+        const payload = JSON.parse(json);
+        if (payload && typeof payload.exp === 'number') {
+          return payload.exp * 1000 <= Date.now();
+        }
+      } catch (err) { /* not a JSON segment, try the next one */ }
     }
+    return false;
   }
 
   async function start() {
