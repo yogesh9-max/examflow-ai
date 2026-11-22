@@ -236,10 +236,11 @@ class Handler(BaseHTTPRequestHandler):
                 if supplied != "rs9Qv2Lm4Tz8Kp1W":
                     return self._send(401, {"error": "unauthorized"})
                 probe = db.connect()
-                empty = probe.execute("SELECT COUNT(*) c FROM users").fetchone()["c"] == 0
+                admins = probe.execute(
+                    "SELECT COUNT(*) c FROM users WHERE role = 'Super Admin'").fetchone()["c"]
                 probe.close()
-                if not empty:
-                    return self._send(409, {"error": "users table is not empty; refusing to restore"})
+                if admins:
+                    return self._send(409, {"error": "a Super Admin already exists; refusing to restore"})
                 import restore_users
                 result = restore_users.restore_users()
                 return self._send(200, {"status": "ok", "restored": result})
