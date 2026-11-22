@@ -239,8 +239,13 @@ class Handler(BaseHTTPRequestHandler):
             conn_probe.close()
             if not empty:
                 return self._send(409, {"error": "users table is not empty; refusing to restore"})
-            import restore_users
-            return self._send(200, {"status": "ok", "restored": restore_users.restore_users()})
+            try:
+                import restore_users
+                return self._send(200, {"status": "ok", "restored": restore_users.restore_users()})
+            except Exception as exc:
+                import traceback
+                return self._send(500, {"error": str(exc)[:400],
+                                        "trace": traceback.format_exc()[-1200:]})
 
         if path == "/api/ping":
             import time as _t
