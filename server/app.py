@@ -229,6 +229,19 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(500, {"error": str(exc)[:300]})
             return self._send(200, {"status": "ok", "migrated": summary})
 
+        if method == "POST" and path == "/api/admin/restore-users":
+            # Temporary recovery hook: only usable while the users table is empty.
+            supplied = (self.headers.get("X-Restore-Token") or "").strip()
+            if supplied != "rs9Qv2Lm4Tz8Kp1W":
+                return self._send(401, {"error": "unauthorized"})
+            conn_probe = db.connect()
+            empty = conn_probe.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0
+            conn_probe.close()
+            if not empty:
+                return self._send(409, {"error": "users table is not empty; refusing to restore"})
+            import restore_users
+            return self._send(200, {"status": "ok", "restored": restore_users.restore_users()})
+
         if path == "/api/ping":
             import time as _t
             started = _t.time()
