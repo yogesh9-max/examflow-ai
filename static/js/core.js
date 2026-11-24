@@ -754,6 +754,20 @@
     if (!primary) slot.appendChild(h('div', { class: 'auth-divider', text: 'or' }));
     slot.appendChild(host);
     slot.appendChild(problem);
+    /* Always offer a same-tab route: if the browser blocks the popup (or a
+       third-party cookie policy gets in the way) the button above looks dead,
+       while this link still signs the person in through a normal page load. */
+    const nonce = Math.random().toString(36).slice(2);
+    const fallback = h('a', {
+      class: 'tiny muted',
+      style: 'display:block;text-align:center;margin-top:8px;text-decoration:underline',
+      href: 'https://accounts.google.com/o/oauth2/v2/auth?client_id=' + encodeURIComponent(clientId)
+        + '&redirect_uri=' + encodeURIComponent(location.origin + '/')
+        + '&response_type=id_token&scope=' + encodeURIComponent('openid email profile')
+        + '&nonce=' + nonce + '&prompt=select_account',
+      text: 'Google button not opening? Sign in with Google in this tab',
+    });
+    slot.appendChild(fallback);
 
     const boot = () => {
       try {
@@ -827,14 +841,34 @@
       .catch(() => {});
   }
 
+  let pendingGoogleCredential = null;
+
+  function portalFromHash() {
+    const match = (location.hash || '').match(/^#\/login\/(admin|user|student)/);
+    return match ? match[1] : '';
+  }
+
   function takeGoogleToken() {
     const hash = location.hash || '';
     const marker = '#google_token=';
-    if (hash.indexOf(marker) !== 0) return false;
-    App.state.token = decodeURIComponent(hash.slice(marker.length));
-    localStorage.setItem('examflow_token', App.state.token);
-    history.replaceState(null, '', location.pathname + location.search + '#/login');
-    return true;
+    if (hash.indexOf(marker) === 0) {
+      App.state.token = decodeURIComponent(hash.slice(marker.length));
+      localStorage.setItem('examflow_token', App.state.token);
+      history.replaceState(null, '', location.pathname + location.search + '#/login');
+      return true;
+    }
+    /* Fallback path: the Google sign-in page hands the ID token back in the URL
+       fragment (response_type=id_token), for browsers where the GIS popup cannot
+       open at all. */
+    if (hash.indexOf('id_token=') !== -1 || hash.indexOf('error=') !== -1) {
+      const params = new URLSearchParams(hash.replace(/^#/, ''));
+      const credential = params.get('id_token');
+      const problem = params.get('error');
+      history.replaceState(null, '', location.pathname + location.search + '#/login');
+      if (credential) { pendingGoogleCredential = credential; return true; }
+      if (problem) { renderLogin('Google sign-in was cancelled or blocked. Try again.'); return true; }
+    }
+    return false;
   }
 
   function portalCard(portal, title, subtitle, text) {
@@ -1209,6 +1243,21 @@
         '<div style="color:#6b7280;font-size:13px">Starting up, one moment…</div></div>';
     }
     takeGoogleToken();
+    if (pendingGoogleCredential) {
+      const credential = pendingGoogleCredential;
+      pendingGoogleCredential = null;
+      try {
+        const data = await api('/api/auth/google/idtoken', {
+          method: 'POST', body: { credential: credential, portal: portalFromHash() },
+        });
+        App.state.token = data.token;
+        App.state.user = data.user;
+        localStorage.setItem('examflow_token', data.token);
+      } catch (err) {
+        renderLogin(err.message);
+        return;
+      }
+    }
     try {
       const response = await fetch('/api/auth/providers');
       if (response.ok) App.state.providers = await response.json();
