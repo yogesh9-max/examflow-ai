@@ -1274,6 +1274,11 @@
         kpi('Duty days', data.workload.days, `Max ${data.workload.maximum_daily} per day`),
         kpi('School', schoolName(data.invigilator.school_id), data.invigilator.qualification || '')));
 
+      const dutyRunStatus = (data.duties[0] || {}).run_status || '';
+      if (dutyRunStatus && ['Published', 'Approved'].indexOf(dutyRunStatus) === -1) {
+        view.appendChild(h('div', { class: 'alert warn',
+          text: `These duties come from a ${dutyRunStatus.toLowerCase()} timetable that the examination office has not published yet, so times and rooms can still change.` }));
+      }
       view.appendChild(h('div', { class: 'mt16' }, card('Duty schedule',
         dataTable({
           columns: [

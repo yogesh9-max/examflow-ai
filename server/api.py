@@ -1213,27 +1213,40 @@ def my_duties(conn, user):
     if not inv:
         return {"invigilator": None, "duties": [], "workload": {}, "availability": []}
     inv = db.decode_row("invigilators", inv)
-    # duties come from the timetable that is live: the latest published or approved
-    # run, falling back to the newest generated run so a fresh install still shows work
+
+    def duties_for(run_id):
+        return [dict(r) for r in conn.execute(
+            """SELECT sa.examination_date, sa.start_time, sa.end_time, e.subject_name, e.subject_code,
+                      s.school_name, r.room_number, sr.run_name, sr.status run_status
+               FROM invigilator_assignments ia
+               JOIN schedule_assignments sa ON sa.id = ia.schedule_assignment_id
+               JOIN scheduling_runs sr ON sr.id = sa.scheduling_run_id
+               JOIN examinations e ON e.id = sa.examination_id
+               LEFT JOIN schools s ON s.id = e.school_id
+               LEFT JOIN rooms r ON r.id = sa.room_id
+               WHERE ia.invigilator_id = ? AND sa.scheduling_run_id = ?
+               ORDER BY sa.examination_date, sa.start_time""",
+            (inv["id"], run_id)).fetchall()]
+
+    # The live timetable is the newest published/approved run. A newly generated
+    # timetable is not published yet, and that run may be the only place this
+    # invigilator has work, so an empty result falls through to the newest run that
+    # actually gives them a duty (its run_status lets the page label it as a draft).
+    duties = []
     active_run = conn.execute(
         "SELECT id FROM scheduling_runs WHERE status IN ('Published', 'Approved') "
         "ORDER BY created_at DESC LIMIT 1").fetchone()
-    if not active_run:
-        active_run = conn.execute(
-            "SELECT id FROM scheduling_runs ORDER BY created_at DESC LIMIT 1").fetchone()
-    if not active_run:
-        return {"invigilator": inv, "duties": [], "workload": {}, "availability": []}
-    duties = [dict(r) for r in conn.execute(
-        """SELECT sa.examination_date, sa.start_time, sa.end_time, e.subject_name, e.subject_code,
-                  s.school_name, r.room_number, sr.run_name, sr.status run_status
-           FROM invigilator_assignments ia
-           JOIN schedule_assignments sa ON sa.id = ia.schedule_assignment_id
-           JOIN scheduling_runs sr ON sr.id = sa.scheduling_run_id
-           JOIN examinations e ON e.id = sa.examination_id
-           LEFT JOIN schools s ON s.id = e.school_id
-           LEFT JOIN rooms r ON r.id = sa.room_id
-           WHERE ia.invigilator_id = ? AND sa.scheduling_run_id = ?
-           ORDER BY sa.examination_date, sa.start_time""", (inv["id"], active_run["id"])).fetchall()]
+    if active_run:
+        duties = duties_for(active_run["id"])
+    if not duties:
+        candidate = conn.execute(
+            """SELECT sr.id FROM scheduling_runs sr
+               WHERE EXISTS (SELECT 1 FROM invigilator_assignments ia
+                             JOIN schedule_assignments sa ON sa.id = ia.schedule_assignment_id
+                             WHERE ia.invigilator_id = ? AND sa.scheduling_run_id = sr.id)
+               ORDER BY sr.created_at DESC LIMIT 1""", (inv["id"],)).fetchone()
+        if candidate:
+            duties = duties_for(candidate["id"])
     availability = [db.decode_row("invigilator_availability", r) for r in conn.execute(
         "SELECT * FROM invigilator_availability WHERE invigilator_id=? ORDER BY date",
         (inv["id"],)).fetchall()]
