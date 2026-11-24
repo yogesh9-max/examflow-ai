@@ -146,10 +146,12 @@ class Handler(BaseHTTPRequestHandler):
                    "user": ("Invigilator",),
                    "student": ("Student",)}.get(portal)
         if allowed and user["role"] not in allowed:
-            db.audit(conn, user, "Blocked sign-in (wrong portal)", "user", user["id"],
-                     "Tried the %s portal as %s via Google" % (portal, user["role"]))
+            # Google has already proved who this is, and the shell sends people to the
+            # home page for their own role, so a portal mismatch is not a failure: note
+            # it and let them in rather than bouncing a valid account with an error.
+            db.audit(conn, user, "Signed in via Google from another portal", "user", user["id"],
+                     "Opened the %s portal as %s; routed to their own portal" % (portal, user["role"]))
             conn.commit()
-            return None, PORTAL_GOOGLE_ERRORS.get(portal, "That account belongs to a different portal.")
         return user, None
 
     def _redirect(self, location):
