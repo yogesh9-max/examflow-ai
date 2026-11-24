@@ -760,6 +760,12 @@
         window.google.accounts.id.initialize({
           client_id: clientId,
           ux_mode: 'popup',
+          /* Chrome M125+ otherwise swaps the button to the FedCM flow, which opens a
+             separate tab that cannot hand the credential back to this page, so a
+             click looks like nothing happened. The classic popup hands it back. */
+          use_fedcm_for_button: false,
+          itp_support: true,
+          auto_select: false,
           callback: (response) => {
             if (!response || !response.credential) return;
             problem.style.display = 'none';
